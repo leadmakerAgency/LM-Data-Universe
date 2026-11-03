@@ -18,6 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { useState } from "react";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { IconButton, MenuDivider, MenuItem, Popover, useDialogs } from "@/components/ui";
 import { CardListWidget, CardWidget } from "./CardWidgets";
 import { ChartWidget, SummaryWidget } from "./ChartSummaryWidgets";
@@ -135,7 +136,9 @@ export function WidgetFrame({ widget, siblings }: { widget: DocWidget; siblings:
         </IconButton>
       </header>
       <div className="min-h-0 flex-1">
-        <WidgetBody widget={widget} setOptions={setOptions} />
+        <ErrorBoundary label="This widget couldn't be displayed">
+          <WidgetBody widget={widget} setOptions={setOptions} />
+        </ErrorBoundary>
       </div>
       {canEdit && <div className="absolute bottom-0 left-0 right-0 h-1.5 cursor-row-resize hover:bg-brand-200" onMouseDown={startResize} />}
 

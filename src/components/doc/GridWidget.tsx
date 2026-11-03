@@ -180,7 +180,8 @@ export function GridWidget({ widget, setOptions }: { widget: DocWidget; setOptio
     const col = cols[colIndex.get(p.colId) ?? -1];
     if (!col || !canEdit) return;
     if (col.is_formula) {
-      setEditing({ pos: p, initial: initial ?? col.formula, formula: true });
+      // Typing on a formula cell opens its formula; it never replaces it.
+      setEditing({ pos: p, initial: col.formula, formula: true });
       return;
     }
     if (p.rowId !== NEW_ROW && col.type === "Bool" && initial === undefined) {

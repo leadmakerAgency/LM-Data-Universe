@@ -52,9 +52,13 @@ export function FormWidget({ widget }: { widget: DocWidget }) {
           <>
             <Button
               size="sm"
-              onClick={() => {
-                void navigator.clipboard.writeText(url);
-                toast.success("Form link copied");
+              onClick={async () => {
+                try {
+                  await navigator.clipboard.writeText(url);
+                  toast.success("Form link copied");
+                } catch {
+                  toast.info(`Copy this link: ${url}`);
+                }
               }}
             >
               <Copy size={12} /> Copy link

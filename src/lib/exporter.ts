@@ -3,7 +3,9 @@ import { displayValue } from "./format";
 import { FormulaError, isDate } from "./formula/values";
 import type { DocWidget } from "./types";
 import { visibleColumns, widgetRows } from "./view";
+import { errorMessage } from "./supabase";
 import { displayCtx, getDerived, tableColumns, useDoc } from "@/store/docStore";
+import { toast } from "@/store/toasts";
 
 function download(blob: Blob, filename: string) {
   const url = URL.createObjectURL(blob);
@@ -18,7 +20,19 @@ function download(blob: Blob, filename: string) {
 
 const safeName = (s: string) => s.replace(/[\\/:*?"<>|]+/g, "_").trim() || "export";
 
-export async function exportWidgetCsv(widget: DocWidget, name: string) {
+/** Runs an export, reporting failures instead of leaving an unhandled rejection. */
+async function guarded(what: string, fn: () => Promise<void>) {
+  try {
+    await fn();
+  } catch (e) {
+    toast.error(`${what} failed: ${errorMessage(e)}`);
+  }
+}
+
+export const exportWidgetCsv = (widget: DocWidget, name: string) => guarded("CSV export", () => widgetCsv(widget, name));
+export const exportDocXlsx = () => guarded("Excel export", docXlsx);
+
+async function widgetCsv(widget: DocWidget, name: string) {
   const Papa = (await import("papaparse")).default;
   const cols = visibleColumns(widget);
   const { ids } = widgetRows(widget);
@@ -29,7 +43,7 @@ export async function exportWidgetCsv(widget: DocWidget, name: string) {
   download(new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" }), `${safeName(name)}.csv`);
 }
 
-export async function exportDocXlsx() {
+async function docXlsx() {
   const ExcelJS = (await import("exceljs")).default;
   const state = useDoc.getState();
   const { engine } = getDerived();

@@ -20,6 +20,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
+import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { Logo } from "@/components/Logo";
 import { ShareDialog } from "@/components/ShareDialog";
 import { Button, IconButton, MenuDivider, MenuItem, Popover, Spinner, useDialogs } from "@/components/ui";
@@ -56,12 +57,15 @@ export function DocScreen({ docId }: { docId: string }) {
   const [editingName, setEditingName] = useState(false);
   const canEdit = role === "owner" || role === "editor";
 
+  // Keyed on the user id, not the session object: the session is replaced on
+  // every token refresh, which must not reload the document.
+  const userId = session?.user.id;
   useEffect(() => {
-    if (!session) return;
+    if (!userId) return;
     void useDoc.getState().load(docId);
     useUi.setState({ activePage: null, activeWidget: null, panel: null, search: "", rawTable: null });
     return () => useDoc.getState().unload();
-  }, [docId, session]);
+  }, [docId, userId]);
 
   // Default to the first page; fall back when the active page disappears.
   useEffect(() => {
@@ -233,7 +237,9 @@ export function DocScreen({ docId }: { docId: string }) {
         {/* content */}
         <main className="scroll-thin min-w-0 flex-1 overflow-auto bg-gray-50 p-4">
           {activePage === "raw" ? (
-            <RawDataView />
+            <ErrorBoundary label="Raw data couldn't be displayed">
+              <RawDataView />
+            </ErrorBoundary>
           ) : currentPage ? (
             pageWidgets.length ? (
               <div className="grid grid-cols-12 gap-4">
@@ -256,7 +262,9 @@ export function DocScreen({ docId }: { docId: string }) {
           )}
         </main>
 
-        <RightPanel />
+        <ErrorBoundary label="Settings panel couldn't be displayed">
+          <RightPanel />
+        </ErrorBoundary>
       </div>
 
       {dialog && <AddWidgetDialog mode={dialog} onClose={() => setDialog(null)} />}

@@ -97,6 +97,18 @@ interface DocState {
 }
 
 let channel: RealtimeChannel | null = null;
+// Each load gets a token; results of an older, superseded load are dropped.
+let loadToken = 0;
+let channelSeq = 0;
+
+function dropChannel() {
+  if (channel) {
+    // removeChannel (not just unsubscribe) so the client forgets the topic;
+    // otherwise reopening the document reuses an already-subscribed channel.
+    void supabase().removeChannel(channel);
+    channel = null;
+  }
+}
 // Rows with writes in flight: realtime echoes for them are ignored until the
 // write returns the canonical row.
 const pendingRows = new Map<number, number>();
@@ -176,6 +188,12 @@ export const useDoc = create<DocState>((set, get) => {
     toast.error(`${what}: ${errorMessage(e)}`);
   };
 
+  /** After a failed write, re-read the document so the screen matches the database. */
+  const reloadAfterFailure = () => {
+    const id = get().docId;
+    if (id) void get().load(id);
+  };
+
   const pushUndo = (ops: UndoOp[]) => {
     const undoStack = [...get().undoStack, ops].slice(-100);
     set({ undoStack, redoStack: [] });
@@ -208,9 +226,9 @@ export const useDoc = create<DocState>((set, get) => {
   };
 
   const subscribe = (docId: string) => {
-    channel?.unsubscribe();
+    dropChannel();
     const filter = `doc_id=eq.${docId}`;
-    const ch = supabase().channel(`doc-${docId}`);
+    const ch = supabase().channel(`doc-${docId}-${++channelSeq}`);
     const tablesToWatch = ["doc_rows", "doc_columns", "doc_tables", "doc_pages", "doc_widgets"] as const;
     for (const table of tablesToWatch) {
       ch.on("postgres_changes", { event: "INSERT", schema: "public", table, filter }, (p) => onChange(table, "INSERT", p.new));
@@ -224,7 +242,7 @@ export const useDoc = create<DocState>((set, get) => {
 
   const onChange = (table: string, event: string, rec: Record<string, unknown>) => {
     const s = get();
-    if (!s.docId) return;
+    if (!s.docId || s.loading) return;
     if (event !== "DELETE" && rec.doc_id !== s.docId) return;
     switch (table) {
       case "doc_rows": {
@@ -372,7 +390,12 @@ export const useDoc = create<DocState>((set, get) => {
     redoStack: [],
 
     async load(docId) {
-      set({ loading: true, error: null, docId, undoStack: [], redoStack: [], cursors: {} });
+      const token = ++loadToken;
+      const sameDoc = get().docId === docId;
+      set({ loading: true, error: null, docId, undoStack: [], redoStack: [], ...(sameDoc ? {} : { cursors: {} }) });
+      // Subscribe before fetching so changes made while loading aren't missed
+      // (events are ignored until the snapshot below is in place).
+      subscribe(docId);
       try {
         const sb = supabase();
         const [docRes, roleRes, tablesRes, colsRes, pagesRes, widgetsRes, sharesRes] = await Promise.all([
@@ -389,7 +412,7 @@ export const useDoc = create<DocState>((set, get) => {
         const rowList = await fetchAll<DocRow>((from, to) =>
           sb.from("doc_rows").select(ROW_FIELDS).eq("doc_id", docId).order("id").range(from, to),
         );
-        if (get().docId !== docId) return;
+        if (token !== loadToken) return;
         const tables = new Map((tablesRes.data as DocTable[]).map((t) => [t.id, t]));
         const rows = new Map<string, Map<number, DocRow>>();
         for (const t of tables.keys()) rows.set(t, new Map());
@@ -406,16 +429,18 @@ export const useDoc = create<DocState>((set, get) => {
           loading: false,
           version: get().version + 1,
         });
-        subscribe(docId);
       } catch (e) {
+        if (token !== loadToken) return;
         set({ loading: false, error: errorMessage(e) });
       }
     },
 
     unload() {
-      channel?.unsubscribe();
-      channel = null;
+      loadToken++;
+      dropChannel();
       set({
+        loading: false,
+        error: null,
         docId: null,
         doc: null,
         tables: new Map(),
@@ -458,7 +483,7 @@ export const useDoc = create<DocState>((set, get) => {
         await writeCells(ops.changes.map((c) => ({ tableRef: c.tableRef, rowId: c.rowId, colId: c.colId, value: c.after })));
       } catch (e) {
         fail(e, "Could not save changes");
-        void get().load(get().docId!);
+        reloadAfterFailure();
       }
     },
 
@@ -488,7 +513,7 @@ export const useDoc = create<DocState>((set, get) => {
         if (opts.undoable !== false) pushUndo([{ k: "deleteRows", tableRef, rows: removed }]);
       } catch (e) {
         fail(e, "Could not delete rows");
-        void get().load(get().docId!);
+        reloadAfterFailure();
       }
     },
 
@@ -723,10 +748,15 @@ export const useDoc = create<DocState>((set, get) => {
       const b = pages[j];
       const swapped = pages.map((p) => (p.id === a.id ? { ...p, position: b.position } : p.id === b.id ? { ...p, position: a.position } : p));
       set({ pages: sortedPages(swapped), version: get().version + 1 });
-      await Promise.all([
+      const results = await Promise.all([
         supabase().from("doc_pages").update({ position: b.position }).eq("id", a.id),
         supabase().from("doc_pages").update({ position: a.position }).eq("id", b.id),
       ]);
+      const failed = results.find((r) => r.error);
+      if (failed) {
+        fail(failed.error, "Could not move page");
+        reloadAfterFailure();
+      }
     },
 
     async deletePage(pageId) {
