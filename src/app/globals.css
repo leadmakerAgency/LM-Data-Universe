@@ -1,0 +1,65 @@
+@import "tailwindcss";
+
+@theme {
+  --color-brand-50: #f1f0fe;
+  --color-brand-100: #e4e1fd;
+  --color-brand-200: #c9c3fb;
+  --color-brand-300: #a79cf7;
+  --color-brand-400: #8574f1;
+  --color-brand-500: #6a55e8;
+  --color-brand-600: #5a43d9;
+  --color-brand-700: #4b36b8;
+  --color-brand-800: #3d2e93;
+  --color-brand-900: #2f2470;
+  --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  --font-mono: var(--font-mono-face), ui-monospace, monospace;
+}
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: #f7f7fa;
+  color: #1f2330;
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: var(--color-brand-200);
+}
+
+/* Thin scrollbars inside the editor */
+.scroll-thin {
+  scrollbar-width: thin;
+  scrollbar-color: #cfd2dc transparent;
+}
+
+.grid-cell-selected {
+  box-shadow: inset 0 0 0 2px var(--color-brand-500);
+}
+
+.grid-range {
+  background: color-mix(in srgb, var(--color-brand-200) 35%, transparent);
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+.toast-in {
+  animation: toast-in 0.18s ease-out;
+}
