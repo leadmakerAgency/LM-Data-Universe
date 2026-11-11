@@ -1,0 +1,121 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Invoice</title>
+<style>
+  body { margin: 0; font: 13px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif; color: #1f2937; background: #f6f7f9; }
+  #bar { display: flex; gap: 8px; align-items: center; padding: 6px 12px; background: #fff; border-bottom: 1px solid #eceef1; font-size: 12px; color: #6b7280; }
+  #bar input { border: 1px solid #d1d5db; border-radius: 5px; padding: 2px 6px; font: inherit; width: 70px; }
+  #bar input.wide { width: 220px; }
+  #bar button { margin-left: auto; border: 1px solid #d1d5db; background: #fff; border-radius: 6px; padding: 3px 10px; font: inherit; cursor: pointer; }
+  .page { max-width: 760px; margin: 16px auto; background: #fff; padding: 36px 40px; border-radius: 8px; box-shadow: 0 1px 3px rgba(0,0,0,.08); }
+  h1 { margin: 0; font-size: 26px; letter-spacing: .02em; }
+  .head { display: flex; justify-content: space-between; gap: 24px; margin-bottom: 28px; }
+  .muted { color: #6b7280; }
+  .from { white-space: pre-line; text-align: right; }
+  .to { white-space: pre-line; }
+  table { width: 100%; border-collapse: collapse; margin-top: 18px; }
+  th { text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: .05em; color: #6b7280; border-bottom: 2px solid #e5e7eb; padding: 6px 4px; }
+  td { border-bottom: 1px solid #f1f2f4; padding: 7px 4px; vertical-align: top; }
+  .num { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  .total td { border: 0; font-weight: 700; font-size: 15px; padding-top: 12px; }
+  .notes { margin-top: 26px; white-space: pre-line; }
+  .empty { text-align: center; color: #9ca3af; padding: 40px; }
+  @media print { #bar { display: none; } body { background: #fff; } .page { box-shadow: none; margin: 0; max-width: none; } }
+</style>
+</head>
+<body>
+<div id="bar">
+  <span id="edit" style="display:none">
+    Currency <input id="cur" maxlength="3" placeholder="EUR">
+    From <input id="from" class="wide" placeholder="Your company, address">
+  </span>
+  <button id="print" type="button">Print</button>
+</div>
+<div class="page" id="page"><div class="empty">Map the invoice columns in Widget options.</div></div>
+<script src="lmdu-widget.js"></script>
+<script>
+  var opts = {};
+  var rec = null;
+  function txt(v) {
+    if (v == null) return "";
+    if (Array.isArray(v)) return v.map(txt).join(", ");
+    if (typeof v === "object") return v.display ? Object.values(v.display).find(function (x) { return x; }) || "" : "";
+    return String(v);
+  }
+  function money(n) {
+    try { return new Intl.NumberFormat(undefined, { style: "currency", currency: opts.currency || "EUR" }).format(n); }
+    catch (e) { return n.toFixed(2); }
+  }
+  function pick(fields, labels, re, fallbackType) {
+    var keys = Object.keys(fields);
+    for (var i = 0; i < keys.length; i++) if (re.test(keys[i]) || re.test(labels[keys[i]] || "")) return keys[i];
+    if (fallbackType) for (var j = 0; j < keys.length; j++) if (typeof fields[keys[j]] === fallbackType) return keys[j];
+    return null;
+  }
+  function num(v) { var n = typeof v === "number" ? v : parseFloat(v); return isFinite(n) ? n : 0; }
+  function render() {
+    var page = document.getElementById("page");
+    if (!rec) { page.innerHTML = '<div class="empty">No record selected.</div>'; return; }
+    var items = Array.isArray(rec.Items) ? rec.Items : [];
+    var rows = "";
+    var total = 0;
+    if (items.length) {
+      var f = items[0].fields;
+      var labels = {};
+      var desc = pick(f, labels, /desc|item|name|product|service|title/i, "string");
+      var qty = pick(f, labels, /qty|quant|hours|units?$/i);
+      var price = pick(f, labels, /price|rate|unit.?cost|cost/i);
+      var amount = pick(f, labels, /amount|total|sum/i);
+      items.forEach(function (it) {
+        var q = qty ? num(it.fields[qty]) : 1;
+        var p = price ? num(it.fields[price]) : 0;
+        var a = amount ? num(it.fields[amount]) : q * p;
+        total += a;
+        rows += "<tr><td>" + lmdu.esc(desc ? it.display[desc] : "#" + it.id) + '</td><td class="num">' + lmdu.esc(qty ? it.display[qty] : "1") +
+          '</td><td class="num">' + (price ? money(p) : "") + '</td><td class="num">' + money(a) + "</td></tr>";
+      });
+    } else {
+      rows = '<tr><td colspan="4" class="muted">Map a Reference List column of line items to “Items”.</td></tr>';
+    }
+    if (rec.Total !== null && rec.Total !== undefined && rec.Total !== "") total = num(rec.Total);
+    page.innerHTML =
+      '<div class="head"><div><h1>Invoice</h1><div class="muted">' + (txt(rec.Number) ? "No. " + lmdu.esc(txt(rec.Number)) : "") + "</div></div>" +
+      '<div class="from">' + lmdu.esc(opts.from || "") + "</div></div>" +
+      '<div class="head"><div class="to"><div class="muted">Bill to</div><b>' + lmdu.esc(txt(rec.Client)) + "</b>" + (txt(rec.Address) ? "\n" + lmdu.esc(txt(rec.Address)) : "") + "</div>" +
+      '<div style="text-align:right"><div><span class="muted">Date</span> ' + lmdu.esc(txt(rec.Date)) + "</div>" +
+      (txt(rec.Due) ? '<div><span class="muted">Due</span> ' + lmdu.esc(txt(rec.Due)) + "</div>" : "") + "</div></div>" +
+      '<table><thead><tr><th>Description</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead><tbody>' + rows +
+      '</tbody><tfoot><tr class="total"><td colspan="3" class="num">Total</td><td class="num">' + money(total) + "</td></tr></tfoot></table>" +
+      (txt(rec.Notes) ? '<div class="notes muted">' + lmdu.esc(txt(rec.Notes)) + "</div>" : "");
+  }
+  document.getElementById("print").onclick = function () { window.print(); };
+  function save() { lmdu.setOptions({ currency: document.getElementById("cur").value.trim().toUpperCase(), from: document.getElementById("from").value }); }
+  document.getElementById("cur").onchange = save;
+  document.getElementById("from").onchange = save;
+  lmdu.onInit(function (m) { document.getElementById("edit").style.display = m.canEdit ? "inline" : "none"; });
+  lmdu.onOptions(function (o) {
+    opts = o || {};
+    document.getElementById("cur").value = opts.currency || "";
+    document.getElementById("from").value = opts.from || "";
+    render();
+  });
+  lmdu.onRecord(function (r) { rec = r; render(); });
+  lmdu.ready({
+    requires: "read",
+    columns: [
+      { name: "Number", title: "Invoice number", optional: true },
+      { name: "Date", optional: true },
+      { name: "Due", title: "Due date", optional: true },
+      { name: "Client", title: "Bill to" },
+      { name: "Address", title: "Client address", optional: true },
+      { name: "Items", title: "Line items (Reference List)", type: "RefList" },
+      { name: "Total", title: "Total (else summed from items)", type: "Numeric,Int", optional: true },
+      { name: "Notes", optional: true },
+    ],
+  });
+</script>
+</body>
+</html>

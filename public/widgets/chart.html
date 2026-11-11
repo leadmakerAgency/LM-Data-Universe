@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Combo chart</title>
+<style>
+  html, body { margin: 0; height: 100%; font: 13px system-ui, -apple-system, "Segoe UI", sans-serif; color: #374151; }
+  #wrap { position: absolute; inset: 10px; }
+  #note { position: absolute; inset: 0; display: none; align-items: center; justify-content: center; color: #9ca3af; }
+</style>
+</head>
+<body>
+<div id="wrap"><canvas id="c"></canvas></div>
+<div id="note"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<script src="lmdu-widget.js"></script>
+<script>
+  var COLORS = ["#6a55e8", "#14b8a6", "#f59e0b", "#ec4899", "#0ea5e9", "#84cc16", "#f97316", "#8b5cf6"];
+  var chart = null;
+  var ids = [];
+  function num(v) { var n = typeof v === "number" ? v : parseFloat(v); return isFinite(n) ? n : null; }
+  function label(v) { return v && typeof v === "object" ? (v.display ? Object.values(v.display)[0] : "") : v == null ? "" : String(v); }
+  function note(msg) { var n = document.getElementById("note"); n.textContent = msg; n.style.display = msg ? "flex" : "none"; }
+  lmdu.onRecords(function (records) {
+    var info = records.length ? records[0] : null;
+    var bars = info && Array.isArray(info.Bars) ? info.Bars.length : 0;
+    var lines = info && Array.isArray(info.Lines) ? info.Lines.length : 0;
+    if (!records.length) return note("No records.");
+    if (!bars && !lines) return note("Map bar and line columns in Widget options.");
+    note("");
+    ids = records.map(function (r) { return r.id; });
+    var datasets = [];
+    function series(key, count, type, axis) {
+      for (var i = 0; i < count; i++) {
+        var color = COLORS[datasets.length % COLORS.length];
+        datasets.push({
+          type: type,
+          label: ((lmdu.mapping[key] || [])[i]) || key + " " + (i + 1),
+          data: records.map(function (r) { return num(r[key][i]); }),
+          backgroundColor: type === "bar" ? color + "cc" : color,
+          borderColor: color,
+          borderWidth: type === "bar" ? 0 : 2,
+          pointRadius: type === "line" ? 2 : 0,
+          spanGaps: true,
+          yAxisID: axis,
+          order: type === "line" ? 0 : 1,
+        });
+      }
+    }
+    series("Bars", bars, "bar", "y");
+    series("Lines", lines, "line", lines && bars ? "y1" : "y");
+    var data = { labels: records.map(function (r) { return label(r.X) || "#" + r.id; }), datasets: datasets };
+    var options = {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      interaction: { mode: "index", intersect: false },
+      plugins: { legend: { display: datasets.length > 1, labels: { boxWidth: 12 } } },
+      scales: {
+        y: { beginAtZero: true, grid: { color: "#eef0f4" } },
+        y1: { display: !!(lines && bars), position: "right", beginAtZero: true, grid: { drawOnChartArea: false } },
+        x: { grid: { display: false } },
+      },
+      onClick: function (_e, els) { if (els.length) lmdu.setCursor(ids[els[0].index]); },
+    };
+    if (chart) { chart.data = data; chart.options = options; chart.update(); }
+    else chart = new Chart(document.getElementById("c"), { type: "bar", data: data, options: options });
+  });
+  lmdu.ready({
+    requires: "read",
+    columns: [
+      { name: "X", title: "Categories (X axis)" },
+      { name: "Bars", title: "Bars (left axis)", type: "Numeric,Int", multiple: true, optional: true },
+      { name: "Lines", title: "Lines (right axis)", type: "Numeric,Int", multiple: true, optional: true },
+    ],
+  });
+</script>
+</body>
+</html>

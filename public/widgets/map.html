@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Map</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  html, body, #map { margin: 0; height: 100%; font: 13px system-ui, -apple-system, "Segoe UI", sans-serif; }
+  #note { position: absolute; z-index: 1000; left: 50%; top: 10px; transform: translateX(-50%); background: #fff; border-radius: 6px; padding: 4px 10px; box-shadow: 0 1px 4px rgba(0,0,0,.15); color: #4b5563; display: none; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="note"></div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script src="lmdu-widget.js"></script>
+<script>
+  var map = L.map("map", { worldCopyJump: true }).setView([20, 0], 2);
+  L.tileLayer("https://tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>',
+  }).addTo(map);
+  var layer = L.layerGroup().addTo(map);
+  var markers = {};
+  var selected = null;
+  var fitted = false;
+  function num(v) { var n = typeof v === "number" ? v : parseFloat(v); return isFinite(n) ? n : null; }
+  function text(v) { return v && typeof v === "object" ? (v.display ? Object.values(v.display)[0] : "") : v == null ? "" : String(v); }
+  function style(id) {
+    var on = id === selected;
+    return { radius: on ? 9 : 6, color: on ? "#111827" : "#fff", weight: 2, fillColor: on ? "#ef4444" : "#6a55e8", fillOpacity: 0.9 };
+  }
+  function note(msg) { var n = document.getElementById("note"); n.textContent = msg; n.style.display = msg ? "block" : "none"; }
+  lmdu.onRecords(function (records) {
+    layer.clearLayers();
+    markers = {};
+    var pts = [];
+    records.forEach(function (r) {
+      var lat = num(r.Latitude), lng = num(r.Longitude);
+      if (lat === null || lng === null || Math.abs(lat) > 90 || Math.abs(lng) > 180) return;
+      var m = L.circleMarker([lat, lng], style(r.id)).addTo(layer);
+      var title = text(r.Name) || "#" + r.id;
+      var extra = text(r.Details);
+      m.bindTooltip(lmdu.esc(title));
+      m.bindPopup("<b>" + lmdu.esc(title) + "</b>" + (extra ? "<br>" + lmdu.esc(extra) : ""));
+      m.on("click", function () { lmdu.setCursor(r.id); });
+      markers[r.id] = m;
+      pts.push([lat, lng]);
+    });
+    note(records.length && !pts.length ? "Map the Latitude and Longitude columns in Widget options." : "");
+    if (pts.length && !fitted) { map.fitBounds(pts, { padding: [30, 30], maxZoom: 13 }); fitted = true; }
+  });
+  lmdu.onRecord(function (r) {
+    var prev = selected;
+    selected = r ? r.id : null;
+    if (markers[prev]) markers[prev].setStyle(style(prev));
+    if (markers[selected]) {
+      markers[selected].setStyle(style(selected)).bringToFront();
+      if (!map.getBounds().contains(markers[selected].getLatLng())) map.panTo(markers[selected].getLatLng());
+    }
+  });
+  lmdu.ready({
+    requires: "read",
+    columns: [
+      { name: "Name", title: "Name", optional: true },
+      { name: "Latitude", type: "Numeric,Int,Any,Text" },
+      { name: "Longitude", type: "Numeric,Int,Any,Text" },
+      { name: "Details", title: "Details (in the pop-up)", optional: true },
+    ],
+  });
+</script>
+</body>
+</html>

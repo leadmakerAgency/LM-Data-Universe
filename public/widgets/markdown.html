@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Markdown / HTML viewer</title>
+<style>
+  body { margin: 0; font: 14px/1.6 system-ui, -apple-system, "Segoe UI", sans-serif; color: #1f2937; background: #fff; }
+  #bar { display: none; gap: 6px; align-items: center; padding: 6px 12px; border-bottom: 1px solid #f1f2f4; font-size: 12px; color: #6b7280; }
+  #bar button { border: 1px solid #e5e7eb; background: #fff; border-radius: 6px; padding: 2px 8px; font: inherit; cursor: pointer; }
+  #bar button.on { background: #f3f4f6; color: #111827; font-weight: 600; }
+  #out { padding: 16px 20px; overflow-wrap: anywhere; }
+  #out img { max-width: 100%; }
+  #out pre { background: #f6f7f9; padding: 10px; border-radius: 6px; overflow: auto; }
+  #out code { background: #f3f4f6; padding: 0 3px; border-radius: 3px; }
+  #out table { border-collapse: collapse; } #out td, #out th { border: 1px solid #e5e7eb; padding: 4px 8px; }
+  .empty { color: #9ca3af; }
+</style>
+</head>
+<body>
+<div id="bar">Show as <button data-mode="markdown">Markdown</button><button data-mode="html">HTML</button></div>
+<div id="out" class="empty">Map a text column in Widget options.</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/12.0.2/marked.min.js"></script>
+<script src="lmdu-widget.js"></script>
+<script>
+  // Removes anything that could run code; the frame is sandboxed as well.
+  function clean(html) {
+    var doc = new DOMParser().parseFromString("<body>" + html + "</body>", "text/html");
+    doc.querySelectorAll("script,iframe,object,embed,link,meta,base,form,style").forEach(function (n) { n.remove(); });
+    doc.querySelectorAll("*").forEach(function (el) {
+      Array.from(el.attributes).forEach(function (a) {
+        var v = a.value.trim().toLowerCase();
+        if (/^on/i.test(a.name) || ((a.name === "href" || a.name === "src" || a.name === "xlink:href") && /^(javascript|data:text|vbscript)/.test(v))) el.removeAttribute(a.name);
+      });
+      if (el.tagName === "A") { el.setAttribute("target", "_blank"); el.setAttribute("rel", "noopener noreferrer"); }
+    });
+    return doc.body.innerHTML;
+  }
+  var mode = "markdown";
+  var record = null;
+  function render() {
+    document.querySelectorAll("#bar button").forEach(function (b) { b.classList.toggle("on", b.dataset.mode === mode); });
+    var out = document.getElementById("out");
+    var text = record && record.Content;
+    if (text === null || text === undefined || text === "") {
+      out.className = "empty";
+      out.textContent = record ? "Nothing to show for this record." : "No record selected.";
+      return;
+    }
+    out.className = "";
+    text = typeof text === "object" ? (text.display ? JSON.stringify(text.display) : JSON.stringify(text)) : String(text);
+    out.innerHTML = clean(mode === "html" ? text : window.marked ? marked.parse(text) : lmdu.esc(text).replace(/\n/g, "<br>"));
+  }
+  document.querySelectorAll("#bar button").forEach(function (b) {
+    b.onclick = function () { mode = b.dataset.mode; lmdu.setOptions({ mode: mode }); render(); };
+  });
+  lmdu.onInit(function (m) { document.getElementById("bar").style.display = m.canEdit ? "flex" : "none"; });
+  lmdu.onOptions(function (o) { mode = o.mode === "html" ? "html" : "markdown"; render(); });
+  lmdu.onRecord(function (r) { record = r; render(); });
+  lmdu.ready({ requires: "read", columns: [{ name: "Content", title: "Text to show", type: "Text,Any" }] });
+</script>
+</body>
+</html>

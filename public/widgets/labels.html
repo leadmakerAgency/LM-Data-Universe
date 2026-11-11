@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Print labels</title>
+<style>
+  body { margin: 0; font: 13px/1.4 system-ui, -apple-system, "Segoe UI", sans-serif; color: #111827; background: #f6f7f9; }
+  #bar { display: flex; gap: 8px; align-items: center; padding: 6px 12px; background: #fff; border-bottom: 1px solid #eceef1; font-size: 12px; color: #6b7280; }
+  #bar select { font: inherit; border: 1px solid #d1d5db; border-radius: 5px; }
+  #bar button { margin-left: auto; border: 1px solid #d1d5db; background: #fff; border-radius: 6px; padding: 3px 10px; font: inherit; cursor: pointer; }
+  #sheet { display: grid; gap: 8px; padding: 12px; }
+  .label { background: #fff; border: 1px dashed #d1d5db; border-radius: 6px; padding: 10px 12px; min-height: 64px; overflow: hidden; break-inside: avoid; }
+  .label div:first-child { font-weight: 600; }
+  .empty { color: #9ca3af; padding: 30px; text-align: center; }
+  @media print { #bar { display: none; } body { background: #fff; } #sheet { padding: 0; } .label { border-color: #eee; } }
+</style>
+</head>
+<body>
+<div id="bar">
+  Labels per row
+  <select id="cols"><option>2</option><option selected>3</option><option>4</option></select>
+  <span id="count"></span>
+  <button id="print" type="button">Print</button>
+</div>
+<div id="sheet"><div class="empty">Map the columns to print in Widget options.</div></div>
+<script src="lmdu-widget.js"></script>
+<script>
+  var perRow = 3;
+  var records = [];
+  function txt(v) {
+    if (v == null) return "";
+    if (Array.isArray(v)) return v.map(txt).filter(Boolean).join(", ");
+    if (typeof v === "object") return v.display ? Object.values(v.display).find(function (x) { return x; }) || "" : "";
+    return String(v);
+  }
+  function render() {
+    var sheet = document.getElementById("sheet");
+    sheet.style.gridTemplateColumns = "repeat(" + perRow + ", minmax(0, 1fr))";
+    var html = "";
+    var n = 0;
+    records.forEach(function (r) {
+      var lines = (Array.isArray(r.Lines) ? r.Lines : []).map(txt).filter(function (x) { return x !== ""; });
+      if (!lines.length) return;
+      var copies = Math.max(1, Math.min(100, parseInt(r.Copies, 10) || 1));
+      for (var i = 0; i < copies; i++) {
+        html += '<div class="label">' + lines.map(function (l) { return "<div>" + lmdu.esc(l) + "</div>"; }).join("") + "</div>";
+        n++;
+      }
+    });
+    sheet.innerHTML = html || '<div class="empty" style="grid-column:1/-1">Map the columns to print in Widget options.</div>';
+    document.getElementById("count").textContent = n ? n + " labels" : "";
+  }
+  document.getElementById("cols").onchange = function (e) {
+    perRow = parseInt(e.target.value, 10) || 3;
+    if (lmdu.canEdit) lmdu.setOptions({ perRow: perRow });
+    render();
+  };
+  document.getElementById("print").onclick = function () { window.print(); };
+  lmdu.onOptions(function (o) {
+    perRow = [2, 3, 4].indexOf(o.perRow) >= 0 ? o.perRow : 3;
+    document.getElementById("cols").value = String(perRow);
+    render();
+  });
+  lmdu.onRecords(function (r) { records = r; render(); });
+  lmdu.ready({
+    requires: "read",
+    columns: [
+      { name: "Lines", title: "Lines on each label (in order)", multiple: true },
+      { name: "Copies", title: "Copies per record", type: "Int,Numeric", optional: true },
+    ],
+  });
+</script>
+</body>
+</html>
