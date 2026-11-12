@@ -145,6 +145,53 @@ Migration `20261111100000_phase4_widgets_forms.sql`; tests in `supabase/tests/fo
   access writes only rows of the widget's own table, with the viewer's permissions.
 - Not done: Cloudflare Turnstile; dropdown conditions don't apply on public forms.
 
+## API, webhooks and automations (Phase 5)
+
+Migration `20261111140000_phase5_integrations.sql`; tests in `supabase/tests/integrations.sql`;
+Edge Function `supabase/functions/deliver`.
+
+- **API keys** (account menu → API keys): `lmdu_` + 48 hex characters, shown once, stored
+  as a SHA-256 hash. 600 calls a minute per key.
+- **REST API** (`src/app/api/docs/...`, helpers in `src/lib/apiServer.ts`), with
+  `Authorization: Bearer <key>`. Tables and columns are addressed by name:
+  - `GET /api/docs/{doc}/tables`, `GET …/tables/{table}/columns`
+  - `GET …/tables/{table}/records?filter={"Col":["v"]}&sort=Col,-Other&limit=100`
+    → `{records: [{id, fields: {Col: value}}]}` (formula values included)
+  - `POST …/records` `{records: [{fields}]}` · `PATCH …/records` `{records: [{id, fields}]}`
+  - `PUT …/records` `{records: [{require, fields}]}` adds or updates (`?onmany=first|all|none`, `?noadd`, `?noupdate`)
+  - `DELETE …/records?ids=1,2` or `POST …/records/delete` `[1, 2]`
+  The route handlers only forward the key; the database's `api_*` functions resolve it
+  to its owner (`_api_auth` sets the JWT subject for the call), so roles, access rules
+  and the action log apply as in the app (source `api`). Errors map to 400/401/403/404/429.
+- **Webhooks and automations** (document → Integrations, owners only). A trigger on
+  `doc_actions` turns changes into `job_queue` rows: webhooks per table for added and/or
+  changed records (optionally only when a "ready" column is true); automations on add
+  and/or change of chosen columns, with a condition in the access-rule language
+  (`rec.Status == "Won"`) and up to 5 actions: email (`{{Column}}`, `{{id}}`, `{{link}}`
+  placeholders) or webhook. Records are read as the integration's creator may.
+  Outgoing URLs must be https and not local or private addresses.
+- **Delivery**: `_kick_jobs` wakes the `deliver` Edge Function through pg_net right after
+  a change (and pg_cron every minute). Webhooks are signed: `X-LMDU-Signature: sha256=`
+  HMAC-SHA256 of `"<X-LMDU-Timestamp>.<body>"`. Failures are retried with growing waits
+  (30 s … 60 min; 8 attempts, emails 5). Emails go through SendGrid with the `notify`
+  secrets (`SENDGRID_API_KEY`, `NOTIFY_FROM`, `APP_URL`).
+- **Import** (document → Import / export → Import data…, or Raw data): CSV, TSV or Excel
+  from a file, a web address or a Google Sheets link (shared "anyone with the link"), into
+  a new table or an existing one. Columns are matched by name and can be remapped or
+  created; "update matches on key columns" updates records whose key values match
+  (ignoring case and spaces) and adds or skips the rest, with counts and a preview first.
+  Logic in `src/lib/importer.ts`. Web addresses are fetched by `/api/import-url` for
+  signed-in people only, over http(s), refusing local and private networks (checked after
+  DNS lookup and on each redirect), 20 MB and 20 s at most (`src/lib/urlImport.ts`).
+- **Export**: any table as CSV, TSV or Excel (Import / export menu or Raw data), the whole
+  document as Excel, and a **backup file** (`doc_backup`: structure, records, pages,
+  widgets, and for owners the access rules; no attached files). Home → Import a file
+  restores a backup as a new document (`restore_backup`, new ids throughout).
+  Migration `20261111170000_phase5_backup_restore.sql`; tests in `supabase/tests/forms_backup.sql`.
+- **Embed codes** (Share → a view link without sign-in → the `</>` button): an `<iframe>`
+  of `/s/<token>?embed=1` with optional `&nav=1` (page list) and `&page=<id>`. Embedded
+  documents are read-only and show no toolbar, side panels or widget menus.
+
 ## Grid shortcuts
 
 - `Ctrl+D` fill down (top row of the selection into the rows below; one row copies the row above)

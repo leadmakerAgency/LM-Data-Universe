@@ -34,6 +34,8 @@ interface UiState {
   findTarget: FindTarget | null;
   /** Record shown in the record card popup. */
   recordCard: { tableRef: string; rowId: number } | null;
+  /** Shown inside another site (embed code): no editing chrome. */
+  embed: boolean;
   setActivePage(id: string | null): void;
   setActiveWidget(id: string | null): void;
   setRawTable(id: string | null): void;
@@ -55,6 +57,7 @@ export const useUi = create<UiState>((set) => ({
   drafts: {},
   findTarget: null,
   recordCard: null,
+  embed: false,
   setActivePage: (id) => set({ activePage: id, activeWidget: null, search: "", findTarget: null }),
   setActiveWidget: (id) => set({ activeWidget: id }),
   setRawTable: (id) => set({ rawTable: id }),

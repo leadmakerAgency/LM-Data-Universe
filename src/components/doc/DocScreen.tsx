@@ -16,6 +16,7 @@ import {
   Search,
   Share2,
   ShieldCheck,
+  Zap,
   Eye,
   Sigma,
   MessageSquare,
@@ -24,6 +25,8 @@ import {
   GitBranch,
   Trash2,
   Undo2,
+  Archive,
+  Upload,
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -34,10 +37,12 @@ import { Button, IconButton, MenuDivider, MenuItem, Popover, Spinner, useDialogs
 import { AddWidgetDialog } from "./AddWidgetDialog";
 import { RawDataView } from "./RawDataView";
 import { AccessRulesView } from "./AccessRules";
+import { IntegrationsView } from "./Integrations";
 import { RightPanel } from "./RightPanel";
 import { RecordCardModal } from "./RecordCard";
 import { WidgetFrame } from "./WidgetFrame";
-import { exportDocXlsx } from "@/lib/exporter";
+import { exportBackup, exportDocXlsx, exportTable } from "@/lib/exporter";
+import { ImportDialog } from "./ImportDialog";
 import { useLinkVisitor, useRequireSession, useSession } from "@/lib/session";
 import { useDoc, type SaveState } from "@/store/docStore";
 import { useUi, withDraft } from "@/store/uiStore";
@@ -78,6 +83,9 @@ export function DocScreen({ docId }: { docId: string }) {
   const [dialog, setDialog] = useState<"page" | "widget" | null>(null);
   const [pageMenu, setPageMenu] = useState<{ el: HTMLElement; id: string } | null>(null);
   const [exportMenu, setExportMenu] = useState<HTMLElement | null>(null);
+  const [importing, setImporting] = useState(false);
+  const tablesMap = useDoc((s) => s.tables);
+  const sortedTables = useMemo(() => [...tablesMap.values()].sort((a, b) => a.position - b.position), [tablesMap]);
   const [sharing, setSharing] = useState(false);
   const [editingName, setEditingName] = useState(false);
   const viewAs = useDoc((s) => s.viewAs);
@@ -94,6 +102,11 @@ export function DocScreen({ docId }: { docId: string }) {
   // ?snapshot=<id> shows that snapshot read-only instead of the live document.
   const searchParams = useSearchParams();
   const snapshotParam = Number(searchParams.get("snapshot")) || null;
+  // ?embed=1: shown inside another site (from an embed code): read-only, no toolbar
+  // or side panels; &nav=1 keeps the page list, &page=<id> picks the page.
+  const embed = searchParams.get("embed") === "1";
+  const embedNav = embed && searchParams.get("nav") === "1";
+  const embedPage = embed ? searchParams.get("page") : null;
   useEffect(() => {
     if (!userId) return;
     if (snapshotParam) void useDoc.getState().loadSnapshot(docId, snapshotParam);
@@ -102,6 +115,7 @@ export function DocScreen({ docId }: { docId: string }) {
     return () => useDoc.getState().unload();
   }, [docId, userId, snapshotParam]);
   const snapshot = useDoc((s) => s.snapshot);
+  const showIntegrations = !!session && role === "owner" && !viewAs && !snapshot;
   const [copyDialog, setCopyDialog] = useState<"copy" | "fork" | null>(null);
   const [docMenu, setDocMenu] = useState<HTMLElement | null>(null);
   const [comparing, setComparing] = useState(false);
@@ -121,13 +135,22 @@ export function DocScreen({ docId }: { docId: string }) {
       .then(({ data }) => setOriginal(data ? { id: data.id, name: data.name } : null));
   }, [forkedFrom]);
 
+  useEffect(() => {
+    if (embed && (role === "owner" || role === "editor")) useDoc.setState({ role: "viewer" });
+  }, [embed, role]);
+  useEffect(() => {
+    useUi.setState({ embed });
+    return () => useUi.setState({ embed: false });
+  }, [embed]);
+
   // Default to the first page; fall back when the active page disappears.
   useEffect(() => {
-    if (activePage === "raw" || activePage === "access") return;
+    if (activePage === "raw" || activePage === "access" || activePage === "integrations") return;
     if (!activePage || !pages.some((p) => p.id === activePage)) {
-      setActivePage(pages[0]?.id ?? (doc ? "raw" : null));
+      const wanted = embedPage && pages.some((p) => p.id === embedPage) ? embedPage : null;
+      setActivePage(wanted ?? pages[0]?.id ?? (doc ? "raw" : null));
     }
-  }, [pages, activePage, setActivePage, doc]);
+  }, [pages, activePage, setActivePage, doc, embedPage]);
 
   useEffect(() => {
     if (doc) document.title = `${doc.name} · LM Data Universe`;
@@ -210,6 +233,7 @@ export function DocScreen({ docId }: { docId: string }) {
   return (
     <div className="flex h-full flex-col">
       {/* top bar */}
+      {!embed && (
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-gray-200 bg-white px-3">
         <Link href="/" title="All documents" className="rounded-md p-1 hover:bg-gray-100">
           <Logo compact />
@@ -256,7 +280,7 @@ export function DocScreen({ docId }: { docId: string }) {
         )}
         {!downloadBlocked && (
           <Button size="sm" variant="ghost" onClick={(e) => setExportMenu(e.currentTarget)}>
-            <Download size={14} /> Export
+            <Download size={14} /> {canEdit ? "Import / export" : "Export"}
           </Button>
         )}
         {session ? (
@@ -287,6 +311,7 @@ export function DocScreen({ docId }: { docId: string }) {
           <LayoutPanelLeft size={16} className="rotate-180" />
         </IconButton>
       </header>
+      )}
 
       {viewAs && (
         <div className="flex items-center gap-3 border-b border-amber-200 bg-amber-50 px-4 py-2 text-sm text-amber-900">
@@ -301,15 +326,32 @@ export function DocScreen({ docId }: { docId: string }) {
         </div>
       )}
 
-      <DocBanners
+      {!embed && <DocBanners
         snapshot={snapshot}
         original={original}
         onCompare={() => setComparing(true)}
         onReplaced={() => void useDoc.getState().load(docId)}
-      />
+      />}
 
       <div className="flex min-h-0 flex-1">
+        {embedNav && (
+          <nav className="scroll-thin flex w-48 shrink-0 flex-col gap-0.5 overflow-y-auto border-r border-gray-200 bg-white px-2 py-3">
+            {pages.map((p) => (
+              <button
+                key={p.id}
+                onClick={() => setActivePage(p.id)}
+                className={clsx(
+                  "truncate rounded-md px-2 py-1.5 text-left text-sm",
+                  activePage === p.id ? "bg-brand-50 font-medium text-brand-700" : "text-gray-700 hover:bg-gray-100",
+                )}
+              >
+                {p.name}
+              </button>
+            ))}
+          </nav>
+        )}
         {/* pages */}
+        {!embed && (
         <nav className="scroll-thin flex w-56 shrink-0 flex-col overflow-y-auto border-r border-gray-200 bg-white px-2 py-3">
           <div className="px-2 pb-1 text-xs font-semibold uppercase tracking-wide text-gray-400">Pages</div>
           {pages.map((p) => (
@@ -358,14 +400,30 @@ export function DocScreen({ docId }: { docId: string }) {
                 {acl?.ruled && <span className="ml-auto h-1.5 w-1.5 rounded-full bg-brand-500" title="This document has access rules" />}
               </button>
             )}
+            {showIntegrations && (
+              <button
+                onClick={() => setActivePage("integrations")}
+                className={clsx(
+                  "mt-0.5 flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm",
+                  activePage === "integrations" ? "bg-brand-50 font-medium text-brand-700" : "text-gray-700 hover:bg-gray-100",
+                )}
+              >
+                <Zap size={15} className="opacity-60" /> Integrations
+              </button>
+            )}
           </div>
         </nav>
+        )}
 
         {/* content */}
         <main className="scroll-thin min-w-0 flex-1 overflow-auto bg-gray-50 p-4">
           {activePage === "raw" ? (
             <ErrorBoundary label="Raw data couldn't be displayed">
               <RawDataView />
+            </ErrorBoundary>
+          ) : activePage === "integrations" && showIntegrations ? (
+            <ErrorBoundary label="Integrations couldn't be displayed">
+              <IntegrationsView />
             </ErrorBoundary>
           ) : activePage === "access" && showAccessRules ? (
             <ErrorBoundary label="Access rules couldn't be displayed">
@@ -393,10 +451,22 @@ export function DocScreen({ docId }: { docId: string }) {
           )}
         </main>
 
-        <ErrorBoundary label="Settings panel couldn't be displayed">
-          <RightPanel />
-        </ErrorBoundary>
+        {!embed && (
+          <ErrorBoundary label="Settings panel couldn't be displayed">
+            <RightPanel />
+          </ErrorBoundary>
+        )}
       </div>
+      {embed && (
+        <a
+          href={`/doc/${docId}`}
+          target="_blank"
+          rel="noreferrer"
+          className="fixed bottom-2 right-3 rounded-full bg-white/90 px-2.5 py-1 text-[11px] text-gray-500 shadow-sm ring-1 ring-gray-200 hover:text-brand-700"
+        >
+          {doc.name} · LM Data Universe
+        </a>
+      )}
 
       {dialog && <AddWidgetDialog mode={dialog} onClose={() => setDialog(null)} />}
 
@@ -442,12 +512,43 @@ export function DocScreen({ docId }: { docId: string }) {
         )}
       </Popover>
 
-      <Popover anchor={exportMenu} onClose={() => setExportMenu(null)} align="end">
+      <Popover anchor={exportMenu} onClose={() => setExportMenu(null)} align="end" className="min-w-72">
         <MenuItem icon={<Download size={14} />} onClick={() => (exportDocXlsx(), setExportMenu(null))}>
           Whole document as Excel (.xlsx)
         </MenuItem>
-        <p className="px-3 py-1.5 text-xs text-gray-400">For CSV, use a widget&apos;s ⋯ menu.</p>
+        {session && !copyBlocked && (
+          <MenuItem icon={<Archive size={14} />} hint=".json" onClick={() => (exportBackup(), setExportMenu(null))}>
+            Backup file (restore from Home → Import a file)
+          </MenuItem>
+        )}
+        <MenuDivider />
+        <div className="px-3 pb-1 pt-0.5 text-xs font-medium text-gray-500">One table</div>
+        <div className="scroll-thin max-h-56 overflow-y-auto">
+          {sortedTables.map((t) => (
+            <div key={t.id} className="flex items-center gap-1 px-3 py-1 text-sm">
+              <span className="min-w-0 flex-1 truncate">{t.table_id}</span>
+              {(["csv", "tsv", "xlsx"] as const).map((f) => (
+                <button
+                  key={f}
+                  className="rounded px-1.5 py-0.5 text-xs text-brand-700 hover:bg-brand-50"
+                  onClick={() => (exportTable(t.id, f), setExportMenu(null))}
+                >
+                  {f.toUpperCase()}
+                </button>
+              ))}
+            </div>
+          ))}
+        </div>
+        {canEdit && (
+          <>
+            <MenuDivider />
+            <MenuItem icon={<Upload size={14} />} onClick={() => (setExportMenu(null), setImporting(true))}>
+              Import data…
+            </MenuItem>
+          </>
+        )}
       </Popover>
+      {importing && <ImportDialog onClose={() => setImporting(false)} />}
 
       <RecordCardModal />
       <CellCommentsPopover />

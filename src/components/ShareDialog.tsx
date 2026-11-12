@@ -1,10 +1,11 @@
 "use client";
 
-import { Check, Copy, Link2, Mail, Trash2 } from "lucide-react";
+import { Check, Code2, Copy, Link2, Mail, Trash2 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import { Avatar, Button, IconButton, Input, Modal, Select, Spinner } from "./ui";
 import { supabase, errorMessage } from "@/lib/supabase";
 import { toast } from "@/store/toasts";
+import { useDoc } from "@/store/docStore";
 import type { Profile, Role } from "@/lib/types";
 
 type Kind = "document" | "workspace" | "team";
@@ -200,6 +201,7 @@ function LinkSharing({ docId, links, reload }: { docId: string; links: ShareLink
   const [anon, setAnon] = useState(true);
   const [expires, setExpires] = useState("");
   const [copied, setCopied] = useState<string | null>(null);
+  const [embedding, setEmbedding] = useState<string | null>(null);
 
   const create = async () => {
     const { data: auth } = await supabase().auth.getUser();
@@ -240,10 +242,16 @@ function LinkSharing({ docId, links, reload }: { docId: string; links: ShareLink
                   <IconButton title="Copy link" onClick={() => copy(l.token)}>
                     {copied === l.token ? <Check size={14} className="text-green-600" /> : <Copy size={14} />}
                   </IconButton>
+                  {l.role === "viewer" && l.allow_anonymous && (
+                    <IconButton title="Embed on a website" onClick={() => setEmbedding(embedding === l.token ? null : l.token)}>
+                      <Code2 size={14} />
+                    </IconButton>
+                  )}
                   <IconButton title="Turn off this link" onClick={() => revoke(l.id)}>
                     <Trash2 size={14} />
                   </IconButton>
                 </div>
+                {embedding === l.token && <EmbedCode token={l.token} />}
                 <div className="mt-1 text-xs text-gray-500">
                   Anyone with the link can <b>{l.role === "editor" ? "edit" : "view"}</b>
                   {l.allow_anonymous ? ", no sign-in needed" : ", after signing in"}
@@ -272,6 +280,57 @@ function LinkSharing({ docId, links, reload }: { docId: string; links: ShareLink
       {role === "editor" && anon && (
         <p className="mt-2 text-xs text-amber-700">Anyone who gets this link can change the document without an account. Changes are still in the history.</p>
       )}
+    </div>
+  );
+}
+
+/** An <iframe> code for a view link: pick the page, whether to show the page list, and the height. */
+function EmbedCode({ token }: { token: string }) {
+  const pages = useDoc((s) => s.pages);
+  const [page, setPage] = useState("");
+  const [nav, setNav] = useState(false);
+  const [height, setHeight] = useState(600);
+  const params = new URLSearchParams({ embed: "1" });
+  if (nav) params.set("nav", "1");
+  if (page) params.set("page", page);
+  const src = `${shareUrl(token)}?${params}`;
+  const code = `<iframe src="${src}" width="100%" height="${height}" style="border:0" loading="lazy" title="LM Data Universe"></iframe>`;
+  return (
+    <div className="mt-2 space-y-2 rounded-md bg-gray-50 p-2 text-xs">
+      <div className="flex flex-wrap items-center gap-2">
+        <Select className="h-7 !w-auto text-xs" value={page} onChange={(e) => setPage(e.target.value)}>
+          <option value="">First page</option>
+          {pages.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.name}
+            </option>
+          ))}
+        </Select>
+        <label className="flex items-center gap-1.5">
+          <input type="checkbox" checked={nav} onChange={(e) => setNav(e.target.checked)} /> Show the page list
+        </label>
+        <label className="flex items-center gap-1.5">
+          Height
+          <Input type="number" min={200} max={3000} className="h-7 w-20 text-xs" value={height} onChange={(e) => setHeight(Math.max(200, Math.min(3000, Number(e.target.value) || 600)))} />
+        </label>
+      </div>
+      <div className="flex items-start gap-2">
+        <textarea readOnly value={code} rows={3} className="min-w-0 flex-1 rounded border border-gray-200 bg-white p-1.5 font-mono text-[11px]" onFocus={(e) => e.target.select()} />
+        <IconButton
+          title="Copy embed code"
+          onClick={async () => {
+            try {
+              await navigator.clipboard.writeText(code);
+              toast.success("Embed code copied");
+            } catch {
+              toast.error("Couldn't copy; select the code and copy it yourself.");
+            }
+          }}
+        >
+          <Copy size={14} />
+        </IconButton>
+      </div>
+      <p className="text-gray-500">Read-only, without the toolbar and side panels. Turning off the link stops the embed too.</p>
     </div>
   );
 }

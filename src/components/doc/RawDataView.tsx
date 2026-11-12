@@ -1,15 +1,14 @@
 "use client";
 
 import clsx from "clsx";
-import { Database, Pencil, Plus, Trash2, Upload } from "lucide-react";
-import { useRef, useState } from "react";
-import { Button, IconButton, Spinner, useDialogs } from "@/components/ui";
+import { Database, Download, Pencil, Plus, Trash2, Upload } from "lucide-react";
+import { useState } from "react";
+import { Button, IconButton, MenuItem, Popover, useDialogs } from "@/components/ui";
 import { GridWidget } from "./GridWidget";
-import { addTablesToDoc, parseImportFile } from "@/lib/docBuilder";
-import { errorMessage } from "@/lib/supabase";
+import { ImportDialog } from "./ImportDialog";
+import { exportTable } from "@/lib/exporter";
 import type { DocWidget, WidgetOptions } from "@/lib/types";
 import { tableColumns, useDoc } from "@/store/docStore";
-import { toast } from "@/store/toasts";
 import { useUi } from "@/store/uiStore";
 
 /** Every table in the document with its full data, independent of pages. */
@@ -24,8 +23,9 @@ export function RawDataView() {
   const setRawTable = useUi((s) => s.setRawTable);
   const { confirm, prompt } = useDialogs();
   const [options, setOptions] = useState<Record<string, WidgetOptions>>({});
-  const [busy, setBusy] = useState(false);
-  const fileInput = useRef<HTMLInputElement>(null);
+  const [importing, setImporting] = useState(false);
+  const [exportMenu, setExportMenu] = useState<{ el: HTMLElement; table: string } | null>(null);
+  const exportBlocked = useDoc((s) => s.role !== "owner" && !!s.acl?.settings.block_copies);
 
   const list = [...tables.values()].sort((a, b) => a.position - b.position);
   const selected = list.find((t) => t.id === rawTable) ?? list[0];
@@ -47,24 +47,6 @@ export function RawDataView() {
           }
     : null;
 
-  const importInto = async (file: File) => {
-    setBusy(true);
-    try {
-      const specs = await parseImportFile(file);
-      const docId = useDoc.getState().docId!;
-      await addTablesToDoc(docId, specs, undefined, {
-        existingTableIds: list.map((t) => t.table_id),
-        startPosition: Math.max(0, ...list.map((t) => t.position)),
-      });
-      await useDoc.getState().load(docId);
-      toast.success(`Imported ${specs.length} table${specs.length > 1 ? "s" : ""}`);
-    } catch (e) {
-      toast.error(errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
-  };
-
   return (
     <div className="flex h-full min-h-0 gap-4">
       <div className="flex w-64 shrink-0 flex-col gap-2">
@@ -80,6 +62,18 @@ export function RawDataView() {
             <div className="flex items-center gap-2">
               <Database size={15} className="text-brand-600" />
               <span className="flex-1 truncate font-medium">{t.table_id}</span>
+              {!exportBlocked && (
+                <IconButton
+                  className="h-6 w-6 opacity-0 group-hover:opacity-100"
+                  title="Download this table"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    setExportMenu({ el: e.currentTarget, table: t.id });
+                  }}
+                >
+                  <Download size={13} />
+                </IconButton>
+              )}
               {canEdit && (
                 <>
                   <IconButton
@@ -125,23 +119,20 @@ export function RawDataView() {
             }}>
               <Plus size={14} /> Add empty table
             </Button>
-            <Button onClick={() => fileInput.current?.click()} disabled={busy}>
-              {busy ? <Spinner className="h-4 w-4" /> : <Upload size={14} />} Import CSV / Excel
+            <Button onClick={() => setImporting(true)}>
+              <Upload size={14} /> Import data…
             </Button>
-            <input
-              ref={fileInput}
-              type="file"
-              className="hidden"
-              accept=".csv,.tsv,.txt,.xlsx,.xlsm"
-              onChange={(e) => {
-                const f = e.target.files?.[0];
-                e.target.value = "";
-                if (f) void importInto(f);
-              }}
-            />
           </div>
         )}
       </div>
+      {importing && <ImportDialog initialTable={null} onClose={() => setImporting(false)} />}
+      <Popover anchor={exportMenu?.el ?? null} onClose={() => setExportMenu(null)} align="end">
+        {(["csv", "tsv", "xlsx"] as const).map((f) => (
+          <MenuItem key={f} icon={<Download size={14} />} onClick={() => (exportMenu && exportTable(exportMenu.table, f), setExportMenu(null))}>
+            {f === "csv" ? "CSV (.csv)" : f === "tsv" ? "Tab-separated (.tsv)" : "Excel (.xlsx)"}
+          </MenuItem>
+        ))}
+      </Popover>
       <div className="min-w-0 flex-1 overflow-hidden rounded-lg border border-gray-200 bg-white shadow-sm">
         {widget ? (
           <GridWidget

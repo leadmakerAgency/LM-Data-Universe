@@ -472,7 +472,14 @@ function RuleRow(props: {
 }
 
 /** Condition text box with completion of user., rec. and column names. */
-function ConditionInput(props: { value: string; disabled: boolean; schema: AclSchema; tableRef: string | null; onChange: (v: string) => void }) {
+export function ConditionInput(props: {
+  value: string;
+  disabled: boolean;
+  schema: AclSchema;
+  tableRef: string | null;
+  onChange: (v: string) => void;
+  placeholder?: string;
+}) {
   const ref = useRef<HTMLInputElement>(null);
   const [focused, setFocused] = useState(false);
   const [cursor, setCursor] = useState(0);
@@ -497,7 +504,7 @@ function ConditionInput(props: { value: string; disabled: boolean; schema: AclSc
         ref={ref}
         value={props.value}
         disabled={props.disabled}
-        placeholder="Everyone (always)"
+        placeholder={props.placeholder ?? "Everyone (always)"}
         spellCheck={false}
         className="h-8 w-full rounded-md border border-gray-300 bg-white px-3 font-mono text-xs outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100 disabled:bg-gray-50"
         onFocus={() => setFocused(true)}

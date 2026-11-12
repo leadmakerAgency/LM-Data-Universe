@@ -80,6 +80,7 @@ export function WidgetFrame({ widget: saved, siblings }: { widget: DocWidget; si
   const activeWidget = useUi((s) => s.activeWidget);
   const setActiveWidget = useUi((s) => s.setActiveWidget);
   const openPanel = useUi((s) => s.openPanel);
+  const embed = useUi((s) => s.embed);
   const role = useDoc((s) => s.role);
   const viewingAs = useDoc((s) => !!s.viewAs);
   const canEdit = (role === "owner" || role === "editor") && !viewingAs;
@@ -263,12 +264,16 @@ export function WidgetFrame({ widget: saved, siblings }: { widget: DocWidget; si
             </Chip>
           );
         })}
-        <IconButton title="Widget options" onClick={() => openPanel({ tab: "widget", widgetId: widget.id })}>
-          <Settings2 size={15} />
-        </IconButton>
-        <IconButton title="More" onClick={(e) => setMenu(e.currentTarget)}>
-          <MoreHorizontal size={16} />
-        </IconButton>
+        {!embed && (
+          <>
+            <IconButton title="Widget options" onClick={() => openPanel({ tab: "widget", widgetId: widget.id })}>
+              <Settings2 size={15} />
+            </IconButton>
+            <IconButton title="More" onClick={(e) => setMenu(e.currentTarget)}>
+              <MoreHorizontal size={16} />
+            </IconButton>
+          </>
+        )}
       </header>
       <div className="min-h-0 flex-1">
         <ErrorBoundary label="This widget couldn't be displayed">
