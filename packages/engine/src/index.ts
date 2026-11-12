@@ -3,6 +3,7 @@
 // runs in the browser, in Node and in the Deno-based formula worker.
 export * from "./types";
 export * from "./values";
+export * from "./zone";
 export { Engine, sortCompare, strftime, type DocData, type EngineOptions, type FormulaUser } from "./engine";
 export { applyTriggers, triggerOf, triggerUpdatesForApplied, type TriggerAction, type TriggerSpec } from "./triggers";
 export { FUNCTION_NAMES, lookupFunction, stringMethod, toText } from "./functions";

@@ -2,6 +2,7 @@
 // be tested. Events work in local "wall clock" time: a Date column's value
 // (UTC midnight in the engine) becomes local midnight of the same day.
 import type { CalendarView, CellValue, ColumnType } from "./types";
+import { fromWallClock, toWallClock } from "@engine/zone";
 
 export interface CalEvent {
   id: number;
@@ -51,17 +52,29 @@ export function stepAnchor(view: CalendarView, d: Date, dir: -1 | 1): Date {
   return addDays(d, view === "week" ? 7 * dir : dir);
 }
 
-/** An engine value (Date) as local wall-clock time; Date columns become local midnight. */
-export function toLocal(v: unknown, type: ColumnType): Date | null {
+/**
+ * An engine value (Date) as local wall-clock time; Date columns become local
+ * midnight. DateTime values show the clock of `tz` (the document's time zone)
+ * when one is given.
+ */
+export function toLocal(v: unknown, type: ColumnType, tz?: string | null): Date | null {
   if (!(v instanceof Date) || isNaN(v.getTime())) return null;
   if (type === "Date") return new Date(v.getUTCFullYear(), v.getUTCMonth(), v.getUTCDate());
-  return new Date(v.getTime());
+  try {
+    return toWallClock(v, tz);
+  } catch {
+    return new Date(v.getTime());
+  }
 }
 
-/** What a Date or DateTime column stores for a local time. */
-export function fromLocal(d: Date, type: ColumnType): CellValue {
+/** What a Date or DateTime column stores for a local (wall-clock) time. */
+export function fromLocal(d: Date, type: ColumnType, tz?: string | null): CellValue {
   if (type === "Date") return dayKey(d);
-  return d.toISOString();
+  try {
+    return fromWallClock(d, tz).toISOString();
+  } catch {
+    return d.toISOString();
+  }
 }
 
 /**
@@ -76,11 +89,12 @@ export function makeEvent(
   endType: ColumnType | null,
   title: string,
   color: string,
+  tz?: string | null,
 ): CalEvent | null {
-  const s = toLocal(start, startType);
+  const s = toLocal(start, startType, tz);
   if (!s) return null;
   const allDay = startType === "Date";
-  let e = endType ? toLocal(end, endType) : null;
+  let e = endType ? toLocal(end, endType, tz) : null;
   if (allDay) {
     // A Date end is the last day, inclusive.
     e = e ? addDays(startOfDay(e), 1) : null;

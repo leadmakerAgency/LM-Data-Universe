@@ -13,7 +13,8 @@ import { applyTriggers } from "@engine/triggers";
 import { initialReverse, reverseRepair, reverseSync } from "@/lib/reverse";
 import { renameColumnInFormula, renameTableInFormula } from "@engine/parser";
 import { FormulaError } from "@engine/values";
-import { convertValue, displayValue, parseInput, type DisplayContext, type ParseContext } from "@/lib/format";
+import { convertValue, displayValue, parseInput, setFormatSettings, type DisplayContext, type ParseContext } from "@/lib/format";
+import { isValidTimeZone } from "@engine/zone";
 import { between, labelToIdent, nextColumnLetter, uniqueIdent } from "@/lib/ids";
 import { applyActionsLocal, cellUpdates, newId, type ApplyResult, type DocAction } from "@/lib/actions";
 import { toast } from "./toasts";
@@ -25,6 +26,7 @@ import type {
   DocPage,
   DocRow,
   DocTable,
+  DocSettings,
   DocWidget,
   DocumentRec,
   FormShare,
@@ -108,6 +110,8 @@ interface DocState {
   removeTwoWay(colId: string): Promise<void>;
 
   renameDoc(name: string): Promise<void>;
+  /** Saves Document settings (locale, currency, time zone); owners and editors. */
+  saveSettings(settings: DocSettings): Promise<boolean>;
   addPage(name: string, widget: NewWidgetSpec): Promise<DocPage | null>;
   renamePage(pageId: string, name: string): Promise<void>;
   movePage(pageId: string, delta: number): Promise<void>;
@@ -205,7 +209,13 @@ export function getDerived() {
     }
     for (const list of colsByTable.values()) list.sort((a, b) => a.position - b.position);
     // With access rules the browser only has some records: show the server's formula values.
-    const engine = new Engine({ tables: s.tables, columns: s.columns, colsByTable, rows: s.rows }, { user: s.me, serverValues: !!s.acl?.ruled });
+    // Document settings: formatting reads them globally; TODAY() uses the time zone.
+    setFormatSettings(s.doc?.settings);
+    const timezone = s.doc?.settings?.timezone || null;
+    const engine = new Engine(
+      { tables: s.tables, columns: s.columns, colsByTable, rows: s.rows },
+      { user: s.me, serverValues: !!s.acl?.ruled, timezone: timezone && isValidTimeZone(timezone) ? timezone : null },
+    );
     derived = { colsByTable, engine, refIndex: new Map() };
     derivedVersion = s.version;
     derivedDoc = s.docId;
@@ -1132,6 +1142,21 @@ export const useDoc = create<DocState>((set, get) => {
       const { error } = await supabase().from("documents").update({ name: name.trim() }).eq("id", s.doc.id);
       if (error) return fail(error, "Could not rename document");
       set({ doc: { ...s.doc, name: name.trim() } });
+    },
+
+    async saveSettings(settings) {
+      const s = get();
+      if (!s.doc || !s.canEdit()) return false;
+      const clean: DocSettings = {};
+      for (const k of ["locale", "currency", "timezone"] as const) if (settings[k]) clean[k] = settings[k];
+      const { data, error } = await supabase().rpc("set_doc_settings", { p_doc: s.doc.id, p_settings: clean });
+      if (error) {
+        fail(error, "Could not save document settings");
+        return false;
+      }
+      // Version bump: formatting and TODAY() are recomputed everywhere.
+      set({ doc: { ...get().doc!, settings: (data as DocSettings | null) ?? clean }, version: get().version + 1 });
+      return true;
     },
 
     async addPage(name, widget) {

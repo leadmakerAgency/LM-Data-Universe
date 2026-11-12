@@ -24,6 +24,8 @@ export interface DocData {
   columns: Map<string, DocColumn>;
   colsByTable: Map<string, DocColumn[]>;
   rows: Map<string, Map<number, DocRow>>;
+  /** The document's time zone (IANA name) for TODAY(); local time when unset. */
+  timezone?: string | null;
 }
 
 /** The person a formula runs for (trigger formulas, access rules). */
@@ -42,6 +44,8 @@ export interface EngineOptions {
    * may read, so computing formulas locally could give wrong answers.
    */
   serverValues?: boolean;
+  /** Time zone for TODAY(); defaults to DocData.timezone. */
+  timezone?: string | null;
 }
 
 const COMPUTING = Symbol("computing");
@@ -75,10 +79,12 @@ export class Engine {
 
   private user: FormulaUser | null;
   private serverValues: boolean;
+  private timezone: string | null;
 
   constructor(private data: DocData, opts: EngineOptions = {}) {
     this.user = opts.user ?? null;
     this.serverValues = !!opts.serverValues;
+    this.timezone = opts.timezone ?? data.timezone ?? null;
     for (const t of data.tables.values()) this.tableByName.set(t.table_id, t);
     for (const c of data.columns.values()) this.colByName.set(`${c.table_ref}|${c.col_id}`, c);
   }
@@ -479,6 +485,11 @@ export class Engine {
         const special = this.docFunction(n.name.toUpperCase());
         if (special) return special;
         const fn = lookupFunction(n.name);
+        // TODAY() without a zone means today in the document's time zone.
+        if (fn && this.timezone && n.name.toUpperCase() === "TODAY") {
+          const tz = this.timezone;
+          return ((args, kw) => (args.length || kw.tz !== undefined ? fn(args, kw) : fn([tz], kw))) as Callable;
+        }
         if (fn) return fn;
         throw new FormulaError("#NAME?", `Unknown name "${n.name}"`);
       }
