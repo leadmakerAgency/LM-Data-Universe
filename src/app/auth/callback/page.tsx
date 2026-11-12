@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import { Spinner } from "@/components/ui";
 import { supabase, errorMessage } from "@/lib/supabase";
+import { authErrorCode } from "@/lib/authLinkError";
 
 // Landing page for email confirmation links. The browser client exchanges the
 // ?code= parameter for a session on load; we wait for it, then continue.
@@ -17,8 +18,16 @@ export default function AuthCallbackPage() {
     const target = next.startsWith("/") ? next : "/";
     const sb = supabase();
     const code = url.searchParams.get("code");
+    const linkError = authErrorCode(url.href);
     const finish = async () => {
       try {
+        if (linkError) {
+          // A reused or expired link: the account may already be confirmed,
+          // so carry on if a session exists, otherwise explain on sign-in.
+          const { data } = await sb.auth.getSession();
+          router.replace(data.session ? target : `/login?auth_error=${encodeURIComponent(linkError)}`);
+          return;
+        }
         const { data } = await sb.auth.getSession();
         if (!data.session && code) {
           const { error } = await sb.auth.exchangeCodeForSession(code);

@@ -7,6 +7,7 @@ import { Button, Input, Label } from "@/components/ui";
 import { Logo } from "@/components/Logo";
 import { supabase, errorMessage } from "@/lib/supabase";
 import { useSession } from "@/lib/session";
+import { authErrorMessage } from "@/lib/authLinkError";
 
 type Mode = "login" | "signup" | "forgot";
 
@@ -19,7 +20,9 @@ export function AuthForm({ mode }: { mode: Mode }) {
   const [email, setEmail] = useState(params.get("email") ?? "");
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(() =>
+    authErrorMessage(params.get("auth_error") ?? (params.get("error_code") || params.get("error"))),
+  );
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {

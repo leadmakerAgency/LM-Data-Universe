@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Inter, JetBrains_Mono } from "next/font/google";
 import { DialogProvider, Toasts } from "@/components/ui";
+import { AuthLinkErrors } from "@/components/AuthLinkErrors";
 import "./globals.css";
 
 const inter = Inter({ variable: "--font-inter", subsets: ["latin"] });
@@ -17,6 +18,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
       <body className="h-full">
         <DialogProvider>{children}</DialogProvider>
         <Toasts />
+        <AuthLinkErrors />
       </body>
     </html>
   );
