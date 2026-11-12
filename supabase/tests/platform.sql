@@ -75,17 +75,28 @@ update public.doc_recalc set done_id = 5, requested_id = 5, running_since = null
 insert into public.doc_recalc (doc_id, done_id, requested_id) select 'd0000000-0000-0000-0000-000000000101', 5, 5
 where not exists (select 1 from public.doc_recalc where doc_id = 'd0000000-0000-0000-0000-000000000101');
 update public.documents set settings = settings || '{"timezone": "America/New_York"}' where id = 'd0000000-0000-0000-0000-000000000101';
-select pg_temp.ok((select done_id from public.doc_recalc where doc_id = 'd0000000-0000-0000-0000-000000000101') = 0, 'time zone change: full recalculation');
+select pg_temp.ok((select full_pending from public.doc_recalc where doc_id = 'd0000000-0000-0000-0000-000000000101'), 'time zone change: full recalculation requested');
 select pg_temp.ok((select running_since is not null from public.doc_recalc where doc_id = 'd0000000-0000-0000-0000-000000000101'), 'and the worker is called');
-update public.doc_recalc set done_id = 5, running_since = null where doc_id = 'd0000000-0000-0000-0000-000000000101';
+-- The worker is handed "everything" (done_id 0) once, then increments again.
+select pg_temp.ok((public.worker_start('d0000000-0000-0000-0000-000000000101', 'sek') ->> 'done_id')::int = 0, 'worker gets a full run');
+select pg_temp.ok(not public.worker_finish('d0000000-0000-0000-0000-000000000101', 'sek', 5), 'full run finishes');
+select pg_temp.ok((public.worker_start('d0000000-0000-0000-0000-000000000101', 'sek') ->> 'done_id')::int = 5, 'next run is incremental');
+-- A time zone change while a run is going isn't lost when that run finishes.
+update public.documents set settings = settings || '{"timezone": "Asia/Tokyo"}' where id = 'd0000000-0000-0000-0000-000000000101';
+select pg_temp.ok(public.worker_finish('d0000000-0000-0000-0000-000000000101', 'sek', 5), 'the running worker goes round again');
+select pg_temp.ok((public.worker_start('d0000000-0000-0000-0000-000000000101', 'sek') ->> 'done_id')::int = 0, 'and recalculates everything');
+-- A failed full run is asked for again.
+select pg_temp.ok(not public.worker_finish('d0000000-0000-0000-0000-000000000101', 'sek', 0, 'boom'), 'failed run stops');
+select pg_temp.ok((select full_pending from public.doc_recalc where doc_id = 'd0000000-0000-0000-0000-000000000101'), 'failed full run is requested again');
+update public.doc_recalc set full_pending = false, running_since = null where doc_id = 'd0000000-0000-0000-0000-000000000101';
 update public.documents set settings = settings || '{"currency": "USD"}' where id = 'd0000000-0000-0000-0000-000000000101';
-select pg_temp.ok((select done_id from public.doc_recalc where doc_id = 'd0000000-0000-0000-0000-000000000101') = 5, 'other settings don''t recalculate');
+select pg_temp.ok(not (select full_pending from public.doc_recalc where doc_id = 'd0000000-0000-0000-0000-000000000101'), 'other settings don''t recalculate');
 
 -- Copies and backups keep them.
 set role authenticated;
 select pg_temp.act_as('00000000-0000-0000-0000-000000000101');
 insert into p6ids select 'copy', public.copy_document('d0000000-0000-0000-0000-000000000101', (select v from p6ids where k = 'ws'), 'Platform copy', true, false);
-select pg_temp.ok((select settings->>'timezone' from public.documents where id = (select v from p6ids where k = 'copy')) = 'America/New_York', 'copies keep settings');
+select pg_temp.ok((select settings->>'timezone' from public.documents where id = (select v from p6ids where k = 'copy')) = 'Asia/Tokyo', 'copies keep settings');
 insert into p6ids select 'restored', public.restore_backup((select v from p6ids where k = 'ws'), 'Restored', public.doc_backup('d0000000-0000-0000-0000-000000000101'));
 select pg_temp.ok((select settings->>'locale' from public.documents where id = (select v from p6ids where k = 'restored')) = 'nl-NL', 'backups keep settings');
 insert into p6ids select 'restored2', public.restore_backup((select v from p6ids where k = 'ws'), 'Restored 2',

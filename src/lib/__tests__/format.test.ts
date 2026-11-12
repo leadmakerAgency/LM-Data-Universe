@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from "vitest";
-import { formatDate, formatNumber, normalizeNumber, parseDateTimeText, parseInput, setFormatSettings } from "../format";
+import { editableNumber, formatDate, formatNumber, guessType, normalizeNumber, parseDateTimeText, parseInput, setFormatSettings } from "../format";
 import type { DocColumn } from "../types";
 
 const col = (type: DocColumn["type"], options: DocColumn["options"] = {}): DocColumn => ({
@@ -38,6 +38,41 @@ describe("document settings in formatting", () => {
     expect(parseInput(col("Numeric"), "$1,234.50")).toBe(1234.5);
     expect(parseInput(col("Int"), "1,234")).toBe(1234);
     expect(parseInput(col("Numeric"), "abc")).toBe("abc");
+  });
+
+  it("reads numbers written the other way round too (imports, pastes)", () => {
+    setFormatSettings({ locale: "de-DE" });
+    expect(parseInput(col("Numeric"), "1,234.56")).toBe(1234.56);
+    expect(parseInput(col("Numeric"), "1.234.567")).toBe(1234567);
+    expect(parseInput(col("Numeric"), "1,234")).toBe(1.234);
+    setFormatSettings({ locale: "en-US" });
+    expect(parseInput(col("Numeric"), "1.234,56")).toBe(1234.56);
+    expect(parseInput(col("Numeric"), "12,5")).toBe(12.5);
+    expect(parseInput(col("Numeric"), "1,234,567")).toBe(1234567);
+    expect(parseInput(col("Numeric"), "-1,234")).toBe(-1234);
+    expect(parseInput(col("Numeric"), "1.234")).toBe(1.234);
+  });
+
+  it("puts numbers in the editor so that saving them changes nothing", () => {
+    for (const locale of ["de-DE", "nl-NL", "en-US", "fr-FR"]) {
+      setFormatSettings({ locale });
+      for (const n of [1.234, 1234.5, 1234, -0.5, 1e-7, 123456789.125]) {
+        expect(parseInput(col("Numeric"), editableNumber(n))).toBe(n);
+      }
+    }
+    setFormatSettings({ locale: "de-DE" });
+    expect(editableNumber(1.234)).toBe("1,234");
+  });
+
+  it("guesses number columns in either notation, and leaves dates alone", () => {
+    setFormatSettings({ locale: "de-DE" });
+    expect(guessType(["1.234,5", "12,5", "3"])).toBe("Numeric");
+    expect(guessType(["12.5.2026", "1.1.2025"])).toBe("Date");
+    setFormatSettings({ locale: "en-US" });
+    expect(guessType(["$1,234.50", "€ 3", "12%"])).toBe("Numeric");
+    expect(guessType(["1", "22", "-3"])).toBe("Int");
+    expect(guessType(["12.5.2026"])).toBe("Date");
+    expect(guessType(["1.2.3.4"])).toBe("Text");
   });
 
   it("shows month names in the locale", () => {
