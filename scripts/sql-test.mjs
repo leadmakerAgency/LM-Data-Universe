@@ -32,7 +32,8 @@ create function storage.foldername(name text) returns text[] language sql immuta
 grant execute on function storage.foldername(text) to anon, authenticated;
 create table vault.decrypted_secrets (name text, decrypted_secret text);
 create function cron.schedule(a text, b text, c text) returns bigint language sql as $$ select 1::bigint $$;
-create function net.http_post(url text, body jsonb default null, headers jsonb default null, timeout_milliseconds int default 0) returns bigint language sql as $$ select 1::bigint $$;
+create table net.calls (id bigserial primary key, url text, body jsonb);
+create function net.http_post(url text, body jsonb default null, headers jsonb default null, timeout_milliseconds int default 0) returns bigint language sql as $$ insert into net.calls (url, body) values (url, body) returning id $$;
 create table realtime.messages (id bigserial primary key, topic text, extension text, event text, payload jsonb, private boolean);
 alter table realtime.messages enable row level security;
 grant select on realtime.messages to authenticated, anon;

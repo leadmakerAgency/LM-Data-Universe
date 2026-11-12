@@ -27,7 +27,14 @@ export function ShareLinkLanding({ token }: { token: string }) {
           setError("This link has expired, was turned off, or needs you to sign in first.");
           return;
         }
-        router.replace(`/doc/${row.doc_id}`);
+        // Embed codes add ?embed=1 (and &nav=1, &page=<id>): pass them on.
+        const from = new URLSearchParams(window.location.search);
+        const keep = new URLSearchParams();
+        for (const k of ["embed", "nav", "page"]) {
+          const v = from.get(k);
+          if (v && /^[\w-]{1,64}$/.test(v)) keep.set(k, v);
+        }
+        router.replace(`/doc/${row.doc_id}${keep.size ? `?${keep}` : ""}`);
       });
   }, [token, router]);
   return (

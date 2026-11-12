@@ -18,6 +18,7 @@ import {
   Upload,
   Users,
   Copy,
+  KeyRound,
   Settings2,
 } from "lucide-react";
 import Link from "next/link";
@@ -31,6 +32,7 @@ import { createDocument, parseImportFile } from "@/lib/docBuilder";
 import { useRequireSession } from "@/lib/session";
 import { supabase, errorMessage } from "@/lib/supabase";
 import { BLANK_DOC, TEMPLATES } from "@/lib/templates";
+import { ApiKeysDialog } from "@/components/ApiKeysDialog";
 import type { DocumentRec, Profile, Role, Team, Workspace } from "@/lib/types";
 import { toast } from "@/store/toasts";
 
@@ -54,6 +56,7 @@ export function HomeScreen() {
   const router = useRouter();
   const { confirm, prompt } = useDialogs();
   const [profile, setProfile] = useState<Profile | null>(null);
+  const [apiKeys, setApiKeys] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[] | null>(null);
   const [wsRoles, setWsRoles] = useState<Record<string, Role>>({});
   const [docs, setDocs] = useState<DocumentRec[]>([]);
@@ -138,6 +141,25 @@ export function HomeScreen() {
   const importFile = (file: File) =>
     run(async () => {
       if (!targetWsId) throw new Error("No workspace to create the document in");
+      // A backup file becomes a new document with everything in it.
+      if (/\.json$/i.test(file.name)) {
+        if (file.size > 100 * 1024 * 1024) throw new Error("Backup files can be up to 100 MB");
+        let backup: { format?: string; name?: string };
+        try {
+          backup = JSON.parse(await file.text());
+        } catch {
+          throw new Error("That file isn't a backup (it isn't valid JSON)");
+        }
+        if (backup?.format !== "lmdu-backup") throw new Error("That file isn't an LM Data Universe backup");
+        const { data, error } = await supabase().rpc("restore_backup", {
+          p_workspace: targetWsId,
+          p_name: `${backup.name ?? "Document"} (restored)`,
+          p_backup: backup,
+        });
+        if (error) throw error;
+        router.push(`/doc/${data as string}`);
+        return;
+      }
       const tables = await parseImportFile(file);
       if (!tables.length) throw new Error("The file has no data");
       const id = await createDocument(targetWsId, { name: file.name.replace(/\.[^.]+$/, ""), tables });
@@ -398,7 +420,7 @@ export function HomeScreen() {
               {currentWs && canCreate && (
                 <div className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-3">
                   <QuickAction icon={<FilePlus2 size={20} />} title="Blank document" text="Start with an empty table" onClick={() => createFrom(BLANK_DOC)} disabled={busy} />
-                  <QuickAction icon={<Upload size={20} />} title="Import a file" text="CSV or Excel (.xlsx)" onClick={() => fileInput.current?.click()} disabled={busy} />
+                  <QuickAction icon={<Upload size={20} />} title="Import a file" text="CSV, Excel or a backup file" onClick={() => fileInput.current?.click()} disabled={busy} />
                   <QuickAction icon={<LayoutTemplate size={20} />} title="Use a template" text="CRM, project tracker and more" onClick={() => setView({ kind: "templates" })} disabled={busy} />
                 </div>
               )}
@@ -467,7 +489,7 @@ export function HomeScreen() {
       <input
         ref={fileInput}
         type="file"
-        accept=".csv,.tsv,.txt,.xlsx,.xlsm"
+        accept=".csv,.tsv,.txt,.xlsx,.xlsm,.json"
         className="hidden"
         onChange={(e) => {
           const f = e.target.files?.[0];
@@ -539,6 +561,9 @@ export function HomeScreen() {
       </Popover>
 
       <Popover anchor={userMenu} onClose={() => setUserMenu(null)}>
+        <MenuItem icon={<KeyRound size={15} />} onClick={() => (setUserMenu(null), setApiKeys(true))}>
+          API keys
+        </MenuItem>
         <MenuItem
           icon={<LogOut size={15} />}
           onClick={async () => {
@@ -549,6 +574,7 @@ export function HomeScreen() {
           Sign out
         </MenuItem>
       </Popover>
+      {apiKeys && <ApiKeysDialog onClose={() => setApiKeys(false)} />}
 
       <Popover anchor={teamMenu?.el ?? null} onClose={() => setTeamMenu(null)} align="end">
         {teamMenu && (
