@@ -3,7 +3,65 @@ import type { CellValue, ColumnType, DocColumn } from "./types";
 import type { Engine } from "@engine/engine";
 import { toText } from "@engine/functions";
 import { FormulaError, RecordRef, RecordSet, dateToIso, isDate, parseIsoDate } from "@engine/values";
+import { zonedParts, zonedToUtc, type ZonedParts } from "@engine/zone";
 import { attachmentsText, isAttachmentId } from "./attachments";
+
+/** Document settings that change how values are shown and read (Document settings dialog). */
+export interface FormatSettings {
+  /** BCP 47 locale ("en-US", "de-DE"); the browser's when unset. */
+  locale?: string;
+  /** ISO 4217 code used by currency columns that don't name one. */
+  currency?: string;
+  /** IANA time zone for DateTime values and TODAY(); the viewer's own when unset. */
+  timezone?: string;
+}
+
+let settings: FormatSettings = {};
+let decimalSep = ".";
+let monthNames: { long: string[]; short: string[] } | null = null;
+
+/** Set by the document store whenever the open document (or its settings) changes. */
+export function setFormatSettings(s: FormatSettings | null | undefined) {
+  settings = { ...(s ?? {}) };
+  decimalSep = ".";
+  monthNames = null;
+  try {
+    decimalSep = new Intl.NumberFormat(settings.locale || undefined).formatToParts(1.5).find((p) => p.type === "decimal")?.value ?? ".";
+  } catch {
+    settings.locale = undefined;
+  }
+  if (settings.locale) {
+    try {
+      const long = new Intl.DateTimeFormat(settings.locale, { month: "long", timeZone: "UTC" });
+      const short = new Intl.DateTimeFormat(settings.locale, { month: "short", timeZone: "UTC" });
+      const months = Array.from({ length: 12 }, (_, i) => new Date(Date.UTC(2000, i, 1)));
+      monthNames = { long: months.map((d) => long.format(d)), short: months.map((d) => short.format(d).replace(/\.$/, "")) };
+    } catch {
+      monthNames = null;
+    }
+  }
+}
+
+export function formatSettings(): FormatSettings {
+  return settings;
+}
+
+/** Wall-clock parts in the document's time zone (the viewer's own if unset or unknown). */
+function docZoned(d: Date): ZonedParts {
+  try {
+    return zonedParts(d, settings.timezone);
+  } catch {
+    return zonedParts(d);
+  }
+}
+
+function docZonedToUtc(y: number, m: number, d: number, h = 0, mi = 0, s = 0): Date {
+  try {
+    return zonedToUtc(y, m, d, h, mi, s, settings.timezone);
+  } catch {
+    return zonedToUtc(y, m, d, h, mi, s);
+  }
+}
 
 export const DATE_FORMATS = ["YYYY-MM-DD", "MM/DD/YYYY", "DD/MM/YYYY", "DD.MM.YYYY", "MMM D, YYYY", "D MMMM YYYY"];
 
@@ -12,17 +70,20 @@ const MONTHS = ["January", "February", "March", "April", "May", "June", "July", 
 const pad = (n: number, w = 2) => String(n).padStart(w, "0");
 
 export function formatDate(d: Date, fmt = "YYYY-MM-DD", withTime = false): string {
-  const y = d.getUTCFullYear();
-  const m = d.getUTCMonth();
-  const day = d.getUTCDate();
+  // Dates are UTC midnight; DateTime values are shown in the document's time
+  // zone (Document settings), or the viewer's own when none is set.
+  const zoned = withTime ? docZoned(d) : null;
+  const y = zoned ? zoned.y : d.getUTCFullYear();
+  const m = zoned ? zoned.m - 1 : d.getUTCMonth();
+  const day = zoned ? zoned.d : d.getUTCDate();
   const out = fmt.replace(/YYYY|MMMM|MMM|MM|M|DD|D/g, (tok) => {
     switch (tok) {
       case "YYYY":
         return String(y);
       case "MMMM":
-        return MONTHS[m];
+        return monthNames ? monthNames.long[m] : MONTHS[m];
       case "MMM":
-        return MONTHS[m].slice(0, 3);
+        return monthNames ? monthNames.short[m] : MONTHS[m].slice(0, 3);
       case "MM":
         return pad(m + 1);
       case "M":
@@ -34,10 +95,52 @@ export function formatDate(d: Date, fmt = "YYYY-MM-DD", withTime = false): strin
     }
     return tok;
   });
-  if (!withTime) return out;
-  // DateTime values are shown in the viewer's local time.
-  const local = new Date(d.getTime());
-  return `${out} ${pad(local.getHours())}:${pad(local.getMinutes())}`;
+  if (!zoned) return out;
+  return `${out} ${pad(zoned.h)}:${pad(zoned.mi)}`;
+}
+
+/** Parses typed text into a DateTime (ISO string), reading wall-clock times in the document's time zone. */
+export function parseDateTimeText(text: string, fmt = "YYYY-MM-DD"): string | null {
+  const s = text.trim();
+  if (!s) return null;
+  // ISO timestamps with an offset or Z are exact.
+  if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})$/i.test(s)) {
+    const t = Date.parse(s);
+    return isNaN(t) ? null : new Date(t).toISOString();
+  }
+  const m = /^(.*?)(?:[ T]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(am|pm)?)?$/i.exec(s);
+  const datePart = m ? parseDateText(m[1], fmt) : null;
+  if (m && datePart) {
+    let h = m[2] ? Number(m[2]) : 0;
+    const mi = m[3] ? Number(m[3]) : 0;
+    const sec = m[4] ? Number(m[4]) : 0;
+    const ampm = m[5]?.toLowerCase();
+    if (ampm === "pm" && h < 12) h += 12;
+    if (ampm === "am" && h === 12) h = 0;
+    if (h > 23 || mi > 59 || sec > 59) return null;
+    const [y, mo, d] = datePart.split("-").map(Number);
+    return docZonedToUtc(y, mo, d, h, mi, sec).toISOString();
+  }
+  const t = Date.parse(s);
+  return isNaN(t) ? null : new Date(t).toISOString();
+}
+
+/** Today's date ("YYYY-MM-DD") in the document's time zone. */
+export function todayIso(): string {
+  const p = docZoned(new Date());
+  return `${p.y}-${pad(p.m)}-${pad(p.d)}`;
+}
+
+/** The current time ("HH:MM") in the document's time zone. */
+export function nowHhmm(): string {
+  const p = docZoned(new Date());
+  return `${pad(p.h)}:${pad(p.mi)}`;
+}
+
+/** Midnight today in the document's time zone, as an ISO instant (for DateTime cells). */
+export function startOfTodayIso(): string {
+  const [y, m, d] = todayIso().split("-").map(Number);
+  return docZonedToUtc(y, m, d).toISOString();
 }
 
 /** Parses typed text into "YYYY-MM-DD", or null if it isn't a date. */
@@ -82,10 +185,11 @@ export function formatNumber(n: number, col: Pick<DocColumn, "type" | "options">
     decimals === null
       ? { maximumFractionDigits: 10, useGrouping: mode !== "decimal" }
       : { minimumFractionDigits: decimals, maximumFractionDigits: decimals, useGrouping: mode !== "decimal" };
+  const locale = settings.locale || undefined;
   if (mode === "currency") {
-    const currency = o.currency || "USD";
+    const currency = o.currency || settings.currency || "USD";
     try {
-      return new Intl.NumberFormat(undefined, {
+      return new Intl.NumberFormat(locale, {
         style: "currency",
         currency,
         minimumFractionDigits: decimals ?? 2,
@@ -95,7 +199,7 @@ export function formatNumber(n: number, col: Pick<DocColumn, "type" | "options">
       return `${currency} ${value.toFixed(decimals ?? 2)}`;
     }
   }
-  const text = new Intl.NumberFormat(undefined, opts).format(value);
+  const text = new Intl.NumberFormat(locale, opts).format(value);
   return mode === "percent" ? `${text}%` : text;
 }
 
@@ -186,12 +290,14 @@ export function parseInput(col: DocColumn, text: string, ctx?: ParseContext): Ce
   switch (col.type) {
     case "Numeric": {
       const pct = s.endsWith("%");
-      const n = Number(s.replace(/[%,\s]/g, "").replace(/^[^\d.\-+]+/, ""));
-      if (isNaN(n)) return text;
+      // Currency symbols and codes before or after the number are ignored.
+      const cleaned = normalizeNumber(s.replace(/%$/, "")).replace(/^[^\d.\-+]+/, "").replace(/[^\d.]+$/, "");
+      const n = Number(cleaned);
+      if (!/\d/.test(cleaned) || isNaN(n)) return text;
       return pct ? n / 100 : n;
     }
     case "Int": {
-      const n = Number(s.replace(/[,\s]/g, ""));
+      const n = Number(normalizeNumber(s));
       return isNaN(n) ? text : Math.round(n);
     }
     case "Bool": {
@@ -202,10 +308,8 @@ export function parseInput(col: DocColumn, text: string, ctx?: ParseContext): Ce
     }
     case "Date":
       return parseDateText(s, col.options.dateFormat) ?? text;
-    case "DateTime": {
-      const t = Date.parse(s);
-      return isNaN(t) ? text : new Date(t).toISOString();
-    }
+    case "DateTime":
+      return parseDateTimeText(s, col.options.dateFormat) ?? text;
     case "ChoiceList":
       return s.split(",").map((x) => x.trim()).filter(Boolean);
     case "Ref": {
@@ -233,6 +337,21 @@ export function parseInput(col: DocColumn, text: string, ctx?: ParseContext): Ce
     default:
       return text;
   }
+}
+
+/**
+ * Typed number text in JavaScript syntax: drops grouping and spaces and, in
+ * locales that write decimals with a comma ("1.234,5"), swaps the separators.
+ * There "1.5" stays 1.5; only dot groups of three ("1.234") read as grouping.
+ */
+export function normalizeNumber(s: string): string {
+  const t = s.replace(/[\s  ']/g, "");
+  if (decimalSep === ",") {
+    if (t.includes(",")) return t.replace(/\./g, "").replace(",", ".");
+    if (/^[-+]?\d{1,3}(\.\d{3})+$/.test(t)) return t.replace(/\./g, "");
+    return t;
+  }
+  return t.replace(/,/g, "");
 }
 
 /** Guesses a column type from a sample of text values (used for imports and first entries). */

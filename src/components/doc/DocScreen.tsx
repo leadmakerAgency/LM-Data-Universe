@@ -27,6 +27,8 @@ import {
   Undo2,
   Archive,
   Upload,
+  Settings,
+  Keyboard,
 } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
@@ -43,6 +45,8 @@ import { RecordCardModal } from "./RecordCard";
 import { WidgetFrame } from "./WidgetFrame";
 import { exportBackup, exportDocXlsx, exportTable } from "@/lib/exporter";
 import { ImportDialog } from "./ImportDialog";
+import { DocSettingsDialog } from "./DocSettingsDialog";
+import { ShortcutsDialog } from "./ShortcutsDialog";
 import { useLinkVisitor, useRequireSession, useSession } from "@/lib/session";
 import { useDoc, type SaveState } from "@/store/docStore";
 import { useUi, withDraft } from "@/store/uiStore";
@@ -118,6 +122,8 @@ export function DocScreen({ docId }: { docId: string }) {
   const showIntegrations = !!session && role === "owner" && !viewAs && !snapshot;
   const [copyDialog, setCopyDialog] = useState<"copy" | "fork" | null>(null);
   const [docMenu, setDocMenu] = useState<HTMLElement | null>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [shortcutsOpen, setShortcutsOpen] = useState(false);
   const [comparing, setComparing] = useState(false);
   const [original, setOriginal] = useState<{ id: string; name: string } | null>(null);
   const forkedFrom = useDoc((s) => s.doc?.forked_from ?? null);
@@ -185,6 +191,12 @@ export function DocScreen({ docId }: { docId: string }) {
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       const t = e.target as HTMLElement;
+      // Ctrl+/ (anywhere) or ? (with nothing focused) shows the keyboard shortcuts.
+      if (((e.ctrlKey || e.metaKey) && e.key === "/") || (e.key === "?" && (t === document.body || t === document.documentElement))) {
+        e.preventDefault();
+        setShortcutsOpen((v) => !v);
+        return;
+      }
       if (t.closest("input, textarea, select, [contenteditable]")) return;
       if (!(e.ctrlKey || e.metaKey)) return;
       const k = e.key.toLowerCase();
@@ -549,6 +561,8 @@ export function DocScreen({ docId }: { docId: string }) {
         )}
       </Popover>
       {importing && <ImportDialog onClose={() => setImporting(false)} />}
+      {settingsOpen && <DocSettingsDialog onClose={() => setSettingsOpen(false)} />}
+      {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
 
       <RecordCardModal />
       <CellCommentsPopover />
@@ -566,6 +580,13 @@ export function DocScreen({ docId }: { docId: string }) {
         </MenuItem>
         <MenuItem icon={<MessageSquare size={14} />} onClick={() => (setDocMenu(null), openPanel({ tab: "comments" }))}>
           Comments
+        </MenuItem>
+        <MenuDivider />
+        <MenuItem icon={<Settings size={14} />} onClick={() => (setDocMenu(null), setSettingsOpen(true))}>
+          Document settings…
+        </MenuItem>
+        <MenuItem icon={<Keyboard size={14} />} onClick={() => (setDocMenu(null), setShortcutsOpen(true))}>
+          Keyboard shortcuts
         </MenuItem>
         {!session && <p className="px-3 py-1.5 text-xs text-gray-400">Sign in to save a copy.</p>}
       </Popover>

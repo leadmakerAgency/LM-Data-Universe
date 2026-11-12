@@ -30,7 +30,8 @@ import { CellEditor, type Move } from "./CellEditor";
 import { AttachmentsDialog } from "./Attachments";
 import { attachmentIds } from "@/lib/attachments";
 import { cellCss, styleToCss } from "@/lib/styles";
-import { RecordRef, dateToIso } from "@engine/values";
+import { RecordRef } from "@engine/values";
+import { nowHhmm, startOfTodayIso, todayIso } from "@/lib/format";
 import { FilterPopover } from "./FilterPopover";
 import { commitCell, commitNewRow, editText, parseClipboard, pasteGrid, toClipboardText } from "@/lib/editing";
 import { between } from "@/lib/ids";
@@ -331,9 +332,10 @@ export function GridWidget({ widget, setOptions }: { widget: DocWidget; setOptio
   /** Ctrl+; inserts today's date, Ctrl+Shift+; the current time, into the selected cells. */
   const insertNow = (withTime: boolean) => {
     if (!range || !canEdit) return;
+    // "Today" and "now" in the document's time zone (Document settings).
     const now = new Date();
-    const today = dateToIso(new Date(Date.UTC(now.getFullYear(), now.getMonth(), now.getDate())));
-    const hhmm = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+    const today = todayIso();
+    const hhmm = nowHhmm();
     const changes = [];
     for (const rowId of rangeRowIds()) {
       for (let c = range.c0; c <= range.c1; c++) {
@@ -341,7 +343,7 @@ export function GridWidget({ widget, setOptions }: { widget: DocWidget; setOptio
         if (col.is_formula) continue;
         let value: CellValue;
         if (col.type === "Date") value = today;
-        else if (col.type === "DateTime") value = withTime ? now.toISOString() : new Date(now.getFullYear(), now.getMonth(), now.getDate()).toISOString();
+        else if (col.type === "DateTime") value = withTime ? now.toISOString() : startOfTodayIso();
         else if (col.type === "Text" || col.type === "Any") value = withTime ? hhmm : today;
         else continue;
         changes.push({ tableRef: col.table_ref, rowId, colId: col.id, value });

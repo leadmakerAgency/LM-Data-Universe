@@ -20,6 +20,9 @@ import {
   Copy,
   KeyRound,
   Settings2,
+  Gauge,
+  ShieldCheck,
+  ScrollText,
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -33,6 +36,8 @@ import { useRequireSession } from "@/lib/session";
 import { supabase, errorMessage } from "@/lib/supabase";
 import { BLANK_DOC, TEMPLATES } from "@/lib/templates";
 import { ApiKeysDialog } from "@/components/ApiKeysDialog";
+import { UsageDialog } from "@/components/UsageDialog";
+import { downloadAuditCsv } from "@/lib/audit";
 import type { DocumentRec, Profile, Role, Team, Workspace } from "@/lib/types";
 import { toast } from "@/store/toasts";
 
@@ -57,6 +62,8 @@ export function HomeScreen() {
   const { confirm, prompt } = useDialogs();
   const [profile, setProfile] = useState<Profile | null>(null);
   const [apiKeys, setApiKeys] = useState(false);
+  const [usageFor, setUsageFor] = useState<{ team: Team | null } | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   const [workspaces, setWorkspaces] = useState<Workspace[] | null>(null);
   const [wsRoles, setWsRoles] = useState<Record<string, Role>>({});
   const [docs, setDocs] = useState<DocumentRec[]>([]);
@@ -104,6 +111,22 @@ export function HomeScreen() {
     // eslint-disable-next-line react-hooks/set-state-in-effect
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!userId) return;
+    void supabase()
+      .rpc("is_app_admin")
+      .then(({ data }) => setIsAdmin(data === true));
+  }, [userId]);
+
+  const downloadTeamAudit = async (team: Team) => {
+    try {
+      const n = await downloadAuditCsv({ team: team.id }, `${team.name} audit log.csv`);
+      toast.info(`${n} event${n === 1 ? "" : "s"} downloaded`);
+    } catch (e) {
+      toast.error(`Could not download the audit log: ${errorMessage(e)}`);
+    }
+  };
 
   // A team role applies to every workspace of the team.
   const wsRole = (ws: Workspace | undefined): Role | undefined => (ws ? best(wsRoles[ws.id], ws.team_id ? teamRoles[ws.team_id] : undefined) : undefined);
@@ -561,9 +584,18 @@ export function HomeScreen() {
       </Popover>
 
       <Popover anchor={userMenu} onClose={() => setUserMenu(null)}>
+        <MenuItem icon={<Gauge size={15} />} onClick={() => (setUserMenu(null), setUsageFor({ team: null }))}>
+          Plan and usage
+        </MenuItem>
         <MenuItem icon={<KeyRound size={15} />} onClick={() => (setUserMenu(null), setApiKeys(true))}>
           API keys
         </MenuItem>
+        {isAdmin && (
+          <MenuItem icon={<ShieldCheck size={15} />} onClick={() => (setUserMenu(null), router.push("/admin"))}>
+            Admin panel
+          </MenuItem>
+        )}
+        <MenuDivider />
         <MenuItem
           icon={<LogOut size={15} />}
           onClick={async () => {
@@ -575,6 +607,7 @@ export function HomeScreen() {
         </MenuItem>
       </Popover>
       {apiKeys && <ApiKeysDialog onClose={() => setApiKeys(false)} />}
+      {usageFor && <UsageDialog team={usageFor.team} onClose={() => setUsageFor(null)} />}
 
       <Popover anchor={teamMenu?.el ?? null} onClose={() => setTeamMenu(null)} align="end">
         {teamMenu && (
@@ -595,8 +628,14 @@ export function HomeScreen() {
             >
               New workspace in team
             </MenuItem>
+            <MenuItem icon={<Gauge size={15} />} onClick={() => (setTeamMenu(null), setUsageFor({ team: teamMenu.team }))}>
+              Plan and usage
+            </MenuItem>
             {teamRoles[teamMenu.team.id] === "owner" && (
               <>
+                <MenuItem icon={<ScrollText size={15} />} onClick={() => (setTeamMenu(null), void downloadTeamAudit(teamMenu.team))}>
+                  Download audit log
+                </MenuItem>
                 <MenuItem icon={<Settings2 size={15} />} onClick={() => (setTeamMenu(null), renameTeam(teamMenu.team))}>
                   Rename team
                 </MenuItem>

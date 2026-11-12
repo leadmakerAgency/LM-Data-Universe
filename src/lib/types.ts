@@ -54,6 +54,17 @@ export interface DocumentRec {
   deleted_at?: string | null;
   /** Set on a copy made with "Work on a copy": the document it can replace. */
   forked_from?: string | null;
+  /** Document settings: locale, default currency and time zone. */
+  settings?: DocSettings;
+}
+
+export interface DocSettings {
+  /** BCP 47 locale for numbers and month names ("en-US", "nl-NL"); the viewer's browser when unset. */
+  locale?: string;
+  /** ISO 4217 currency for currency columns that don't name one. */
+  currency?: string;
+  /** IANA time zone for DateTime values and TODAY(); the viewer's own when unset. */
+  timezone?: string;
 }
 
 export interface DocPage {

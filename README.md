@@ -192,6 +192,36 @@ Edge Function `supabase/functions/deliver`.
   of `/s/<token>?embed=1` with optional `&nav=1` (page list) and `&page=<id>`. Embedded
   documents are read-only and show no toolbar, side panels or widget menus.
 
+## Platform (Phase 6)
+
+Migration `20261112100000_phase6_platform.sql`; tests in `supabase/tests/platform.sql`.
+
+- **Document settings** (document menu → Document settings…, owners and editors; `set_doc_settings`):
+  locale (number format, month names, how typed numbers are read), default currency for currency
+  columns, and time zone. DateTime values are shown and entered in the document's zone, the
+  calendar places events by it, and `TODAY()` is today there (`TODAY("Asia/Tokyo")` picks a zone
+  explicitly). Changing the zone recalculates every formula; the worker uses UTC when none is set.
+  Copies and backup files keep the settings. Zone maths lives in `packages/engine/src/zone.ts`.
+- **Keyboard shortcuts**: `Ctrl+/` (or `?` with nothing focused) shows the shortcut sheet.
+- **Plans and limits**: every account (a person's own workspaces, or a team) has a plan in `plans`
+  (Free: 100 documents, 100,000 records per document, 2 GB of attachments; Pro: 1,000 / 500,000 / 50 GB;
+  Unlimited). Triggers enforce them on every write path; documents in the trash don't count. Only
+  administrators change plans. Account menu → Plan and usage (or a team's menu) shows usage.
+- **Usage**: `doc_usage` keeps each document's record count and attachment bytes; `usage_counters`
+  counts changes per document per day by source (app, API, form, automation) and API calls per person.
+- **Audit log** (`audit_log`, kept a year): documents created, renamed, moved, trashed, restored and
+  deleted; settings; sharing, invites and role changes on documents, workspaces and teams; public links;
+  access rules; webhooks and automations; API keys; plans and administrators. Read through
+  `audit_events()`: document owners download their document's log (Document settings), team owners
+  their team's (team menu), administrators everything (admin panel), each as CSV.
+- **Admin panel** (`/admin`): totals and activity, every account with plan, usage against limits
+  and API calls, plan changes, administrators, and the audit log with filters. Make the first
+  administrator in SQL:
+
+  ```sql
+  insert into public.app_admins (user_id) select id from public.profiles where email = 'you@example.com';
+  ```
+
 ## Grid shortcuts
 
 - `Ctrl+D` fill down (top row of the selection into the rows below; one row copies the row above)

@@ -5,6 +5,16 @@ import { ChevronLeft, ChevronRight, Plus } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui";
 import { useWidgetRows } from "./CardWidgets";
+import { toWallClock } from "@engine/zone";
+
+/** The current time as wall-clock time in the document's time zone. */
+function nowWallClock(tz: string | undefined): Date {
+  try {
+    return toWallClock(new Date(), tz);
+  } catch {
+    return new Date();
+  }
+}
 import {
   SNAP_MIN,
   addDays,
@@ -63,7 +73,9 @@ export function CalendarWidget({ widget }: { widget: DocWidget }) {
   // The saved view, until someone switches here.
   const [picked, setView] = useState<CalendarView | null>(null);
   const view: CalendarView = picked ?? widget.options.calView ?? "month";
-  const [anchor, setAnchor] = useState(() => startOfDay(new Date()));
+  // DateTime events are placed by the document's time zone (Document settings).
+  const tz = useDoc((s) => s.doc?.settings?.timezone);
+  const [anchor, setAnchor] = useState(() => startOfDay(nowWallClock(useDoc.getState().doc?.settings?.timezone)));
   const [drag, setDrag] = useState<Drag | null>(null);
   const scroller = useRef<HTMLDivElement>(null);
 
@@ -82,11 +94,11 @@ export function CalendarWidget({ widget }: { widget: DocWidget }) {
       const label = title ? displayValue(ctx, title, engine.safeValue(title, id)) : "";
       const cv = color ? displayValue(ctx, color, engine.safeValue(color, id)) : "";
       const bg = !color ? "#E0E7FF" : color.type === "Choice" ? choiceColor(color, cv) : cv ? hashColor(cv) : "#F3F4F6";
-      const e = makeEvent(id, engine.safeValue(start, id), end ? engine.safeValue(end, id) : null, start.type, end?.type ?? null, label || `#${id}`, bg);
+      const e = makeEvent(id, engine.safeValue(start, id), end ? engine.safeValue(end, id) : null, start.type, end?.type ?? null, label || `#${id}`, bg, tz);
       if (e) out.push(e);
     }
     return out.sort((a, b) => a.start.getTime() - b.start.getTime() || a.id - b.id);
-  }, [ids, start, end, title, color, version]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [ids, start, end, title, color, version, tz]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Events as they would be after the drag in progress.
   const shown = useMemo(() => {
@@ -114,16 +126,16 @@ export function CalendarWidget({ widget }: { widget: DocWidget }) {
     const put = (col: DocColumn, value: CellValue) => changes.push({ tableRef: widget.table_ref!, rowId: e.id, colId: col.id, value });
     if (d.kind === "resize") {
       if (!end || !d.minDelta) return;
-      put(end, fromLocal(new Date(Math.max(addMinutes(e.end, d.minDelta).getTime(), addMinutes(e.start, SNAP_MIN).getTime())), end.type));
+      put(end, fromLocal(new Date(Math.max(addMinutes(e.end, d.minDelta).getTime(), addMinutes(e.start, SNAP_MIN).getTime())), end.type, tz));
     } else {
       if (!d.dayDelta && !d.minDelta) return;
-      put(start, fromLocal(addMinutes(addDays(e.start, d.dayDelta), d.minDelta), start.type));
+      put(start, fromLocal(addMinutes(addDays(e.start, d.dayDelta), d.minDelta), start.type, tz));
       if (end && end.type === start.type) {
         const raw = getDerived().engine.safeValue(end, e.id);
         if (raw instanceof Date) {
           // A Date end is inclusive: move the stored last day, not the exclusive end.
           const last = end.type === "Date" ? addDays(e.end, -1) : e.end;
-          put(end, fromLocal(addMinutes(addDays(last, d.dayDelta), d.minDelta), end.type));
+          put(end, fromLocal(addMinutes(addDays(last, d.dayDelta), d.minDelta), end.type, tz));
         }
       }
     }
@@ -167,8 +179,8 @@ export function CalendarWidget({ widget }: { widget: DocWidget }) {
   const create = async (at: Date, timed: boolean) => {
     if (!canEdit || !start || start.is_formula || !widget.table_ref) return;
     const s = timed ? at : start.type === "DateTime" ? new Date(at.getFullYear(), at.getMonth(), at.getDate(), 9) : at;
-    const data: Record<string, CellValue> = { ...(link.newRowDefaults as Record<string, CellValue>), [start.id]: fromLocal(s, start.type) };
-    if (end && !end.is_formula) data[end.id] = fromLocal(end.type === "Date" ? s : addMinutes(s, 60), end.type);
+    const data: Record<string, CellValue> = { ...(link.newRowDefaults as Record<string, CellValue>), [start.id]: fromLocal(s, start.type, tz) };
+    if (end && !end.is_formula) data[end.id] = fromLocal(end.type === "Date" ? s : addMinutes(s, 60), end.type, tz);
     const rows = await useDoc.getState().addRows(widget.table_ref, [{ data }]);
     if (rows[0]) {
       select(rows[0].id);
@@ -186,7 +198,7 @@ export function CalendarWidget({ widget }: { widget: DocWidget }) {
   if (link.waiting) return <div className="flex h-full items-center justify-center text-sm text-gray-400">Select a record in the linked widget.</div>;
 
   const days = viewDays(view, anchor);
-  const today = new Date();
+  const today = nowWallClock(tz);
 
   const chip = (ev: CalEvent, day: Date, timedRow: boolean) => {
     const continues = !sameDay(ev.start, day) && dayDiff(ev.start, day) > 0;
@@ -214,7 +226,7 @@ export function CalendarWidget({ widget }: { widget: DocWidget }) {
   return (
     <div className="flex h-full flex-col text-sm">
       <div className="flex flex-wrap items-center gap-2 border-b border-gray-100 px-3 py-1.5">
-        <Button size="sm" onClick={() => setAnchor(startOfDay(new Date()))}>
+        <Button size="sm" onClick={() => setAnchor(startOfDay(nowWallClock(tz)))}>
           Today
         </Button>
         <div className="flex">

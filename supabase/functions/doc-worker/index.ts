@@ -39,7 +39,8 @@ async function rpc<T>(fn: string, args: Row): Promise<T> {
 
 async function runOnce(docId: string, secret: string, claim: { done_id: number; requested_id: number }) {
   const started = Date.now();
-  const [tables, columns, rows, actions] = await Promise.all([
+  const [docRes, tables, columns, rows, actions] = await Promise.all([
+    db.from("documents").select("settings").eq("id", docId).maybeSingle(),
     selectAll("doc_tables", "*", (q) => q.eq("doc_id", docId)),
     selectAll("doc_columns", "*", (q) => q.eq("doc_id", docId)),
     selectAll("doc_rows", "id,table_ref,manual_sort,data,computed", (q) => q.eq("doc_id", docId)),
@@ -65,11 +66,14 @@ async function runOnce(docId: string, secret: string, claim: { done_id: number; 
     current.set(r.id, r.computed ?? {});
   }
 
+  // TODAY() uses the document's time zone (Document settings); UTC if none is set.
+  const timezone = typeof docRes.data?.settings?.timezone === "string" ? docRes.data.settings.timezone : "UTC";
   const data = {
     tables: new Map(tables.map((t) => [t.id, t])),
     columns: new Map(columns.map((c) => [c.id, c])),
     colsByTable,
     rows: rowMap,
+    timezone,
   };
 
   // Trigger formulas for records added or changed outside the app (forms, API).

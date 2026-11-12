@@ -13,6 +13,7 @@ import {
   toNumber,
   truthy,
 } from "./values";
+import { zonedParts } from "./zone";
 
 export function toText(v: unknown): string {
   if (v === null || v === undefined) return "";
@@ -161,9 +162,17 @@ const F: Record<string, Callable> = {
   TEXT: ([v]) => str(v),
 
   // ---- dates
-  TODAY: () => {
-    const now = new Date();
-    return utcDate(now.getFullYear(), now.getMonth() + 1, now.getDate());
+  // TODAY(tz): today's date in a time zone ("Europe/Amsterdam"); the engine
+  // passes the document's zone when none is given.
+  TODAY: ([tzArg], kw) => {
+    const tz = kw.tz ?? tzArg;
+    let p;
+    try {
+      p = zonedParts(new Date(), tz === null || tz === undefined || tz === "" ? null : str(tz));
+    } catch {
+      throw new FormulaError("#ValueError", `Unknown time zone "${str(tz)}"`);
+    }
+    return utcDate(p.y, p.m, p.d);
   },
   NOW: () => new Date(),
   DATE: ([y, m, d]) => utcDate(num(y), num(m), num(d)),
