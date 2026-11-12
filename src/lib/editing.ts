@@ -1,5 +1,5 @@
 // Turning typed text into document changes, shared by the grid, cards and paste.
-import { displayValue, guessType, parseInput } from "./format";
+import { displayValue, editableNumber, guessType, parseInput } from "./format";
 import { FormulaError, RecordRef, RecordSet, isDate } from "@engine/values";
 import type { CellValue, DocColumn } from "./types";
 import { displayCtx, getDerived, useDoc, type CellChange } from "@/store/docStore";
@@ -11,7 +11,8 @@ export function editText(col: DocColumn, rowId: number): string {
   const v = engine.safeValue(col, rowId);
   if (v instanceof FormulaError || v === null || v === undefined) return "";
   if (col.type === "Date" && isDate(v)) return v.toISOString().slice(0, 10);
-  if (typeof v === "number" && (col.type === "Numeric" || col.type === "Int" || col.type === "Any")) return String(v);
+  if (typeof v === "number" && (col.type === "Numeric" || col.type === "Int")) return editableNumber(v);
+  if (typeof v === "number" && col.type === "Any") return String(v);
   if (v instanceof RecordRef || v instanceof RecordSet || Array.isArray(v) || typeof v !== "string") {
     return displayValue(displayCtx(), col, v);
   }

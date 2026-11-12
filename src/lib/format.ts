@@ -125,6 +125,15 @@ export function parseDateTimeText(text: string, fmt = "YYYY-MM-DD"): string | nu
   return isNaN(t) ? null : new Date(t).toISOString();
 }
 
+/**
+ * A number as editable text that reads back to the same number: plain digits
+ * with the locale's decimal mark and no grouping ("1234,5" in German).
+ */
+export function editableNumber(n: number): string {
+  const s = String(n);
+  return decimalSep === "," && !/e/i.test(s) ? s.replace(".", ",") : s;
+}
+
 /** Today's date ("YYYY-MM-DD") in the document's time zone. */
 export function todayIso(): string {
   const p = docZoned(new Date());
@@ -340,25 +349,41 @@ export function parseInput(col: DocColumn, text: string, ctx?: ParseContext): Ce
 }
 
 /**
- * Typed number text in JavaScript syntax: drops grouping and spaces and, in
- * locales that write decimals with a comma ("1.234,5"), swaps the separators.
- * There "1.5" stays 1.5; only dot groups of three ("1.234") read as grouping.
+ * Typed, pasted or imported number text in JavaScript syntax. Spaces and
+ * grouping go. With both "." and "," the last one is the decimal mark
+ * ("1,234.5" and "1.234,5" are both 1234.5), whatever the locale. With only
+ * one kind: groups of three digits are grouping when there are several of them
+ * or the locale doesn't use that mark for decimals ("1,234" in English,
+ * "1.234" in German, "1.234.567" anywhere); a single other one is a decimal
+ * mark ("12,5", "1.5"); anything else is left alone ("12.5.2026").
  */
 export function normalizeNumber(s: string): string {
   const t = s.replace(/[\s  ']/g, "");
-  if (decimalSep === ",") {
-    if (t.includes(",")) return t.replace(/\./g, "").replace(",", ".");
-    if (/^[-+]?\d{1,3}(\.\d{3})+$/.test(t)) return t.replace(/\./g, "");
-    return t;
+  const dot = t.lastIndexOf(".");
+  const comma = t.lastIndexOf(",");
+  if (dot >= 0 && comma >= 0) {
+    const [dec, group] = dot > comma ? [".", ","] : [",", "."];
+    return t.split(group).join("").replace(dec, ".");
   }
-  return t.replace(/,/g, "");
+  const sep = dot >= 0 ? "." : comma >= 0 ? "," : null;
+  if (!sep) return t;
+  const count = t.split(sep).length - 1;
+  const grouped = new RegExp(`^[^\\d]*\\d{1,3}(\\${sep}\\d{3})+[^\\d]*$`).test(t);
+  if (grouped && (count > 1 || sep !== decimalSep)) return t.split(sep).join("");
+  if (count > 1) return t; // "12.5.2026" is not a number
+  return sep === "," ? t.replace(",", ".") : t;
 }
 
 /** Guesses a column type from a sample of text values (used for imports and first entries). */
 export function guessType(samples: string[]): ColumnType {
   const vals = samples.map((s) => s.trim()).filter(Boolean);
   if (!vals.length) return "Text";
-  if (vals.every((v) => /^-?[\d,]*\.?\d+%?$/.test(v.replace(/^[$€£]/, "")))) {
+  // Numbers in either notation ("1,234.5", "1.234,5", "12,5%", "€ 3"), read as parseInput would.
+  const asNumber = (v: string) => {
+    const t = normalizeNumber(v.replace(/^[$€£]\s*/, "").replace(/\s*[$€£]$/, "").replace(/%$/, ""));
+    return /^-?\d*\.?\d+$/.test(t) ? Number(t) : null;
+  };
+  if (vals.every((v) => asNumber(v) !== null)) {
     return vals.every((v) => /^-?\d+$/.test(v)) ? "Int" : "Numeric";
   }
   if (vals.every((v) => /^(true|false|yes|no)$/i.test(v))) return "Bool";
