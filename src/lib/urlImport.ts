@@ -24,15 +24,51 @@ function v4Private(ip: string): boolean {
   );
 }
 
+/** The 8 hextets of an IPv6 address (any notation, including a dotted IPv4 tail), or null. */
+function v6Hextets(ip: string): number[] | null {
+  let s = ip.toLowerCase().replace(/%.*$/, "");
+  const tail = /(\d+\.\d+\.\d+\.\d+)$/.exec(s);
+  if (tail) {
+    const [a, b, c, d] = tail[1].split(".").map(Number);
+    s = s.slice(0, -tail[1].length) + ((a << 8) | b).toString(16) + ":" + ((c << 8) | d).toString(16);
+  }
+  const halves = s.split("::");
+  if (halves.length > 2) return null;
+  const head = halves[0] ? halves[0].split(":") : [];
+  const rest = halves.length === 2 && halves[1] ? halves[1].split(":") : [];
+  const fill = halves.length === 2 ? 8 - head.length - rest.length : 0;
+  const parts = [...head, ...Array(Math.max(fill, 0)).fill("0"), ...rest];
+  if (parts.length !== 8) return null;
+  const out = parts.map((p) => parseInt(p, 16));
+  return out.some((n) => !Number.isFinite(n) || n < 0 || n > 0xffff) ? null : out;
+}
+
+const v4FromHextets = (hi: number, lo: number) => `${hi >> 8}.${hi & 255}.${lo >> 8}.${lo & 255}`;
+
 /** Loopback, private, link-local, CGNAT, multicast and reserved addresses (v4 and v6). */
 export function isPrivateAddress(ip: string): boolean {
   const v = isIP(ip);
   if (v === 4) return v4Private(ip);
   if (v !== 6) return true;
-  const s = ip.toLowerCase();
-  const mapped = /^::ffff:(\d+\.\d+\.\d+\.\d+)$/.exec(s);
-  if (mapped) return v4Private(mapped[1]);
-  return s === "::" || s === "::1" || /^f[cd]/.test(s) || /^fe[89ab]/.test(s) || /^ff/.test(s) || s.startsWith("64:ff9b:") || s.startsWith("2001:db8");
+  const h = v6Hextets(ip);
+  if (!h) return true;
+  const [h0, h1, h2, h3, h4, h5, h6, h7] = h;
+  // IPv4 embedded in IPv6: compatible / unspecified / loopback (::/96), mapped (::ffff:0:0/96),
+  // translated (::ffff:0:0:0/96) and NAT64 (64:ff9b::/96, 64:ff9b:1::/48) are checked as IPv4.
+  if (h0 === 0 && h1 === 0 && h2 === 0 && h3 === 0 && ((h4 === 0 && (h5 === 0 || h5 === 0xffff)) || (h4 === 0xffff && h5 === 0))) {
+    return v4Private(v4FromHextets(h6, h7));
+  }
+  if (h0 === 0x64 && h1 === 0xff9b) return true;
+  // 6to4 (2002::/16) carries an IPv4 address in hextets 1-2.
+  if (h0 === 0x2002) return v4Private(v4FromHextets(h1, h2));
+  // Teredo (2001:0::/32), documentation (2001:db8::/32).
+  if (h0 === 0x2001 && (h1 === 0 || h1 === 0xdb8)) return true;
+  return (
+    (h0 & 0xfe00) === 0xfc00 || // unique local fc00::/7
+    (h0 & 0xffc0) === 0xfe80 || // link-local fe80::/10
+    (h0 & 0xffc0) === 0xfec0 || // site-local fec0::/10
+    (h0 & 0xff00) === 0xff00 // multicast
+  );
 }
 
 export class UrlImportError extends Error {
@@ -101,7 +137,13 @@ export async function fetchPublicFile(raw: string): Promise<{ bytes: ArrayBuffer
       }
       const disposition = res.headers.get("content-disposition") ?? "";
       const fromHeader = /filename\*?=(?:UTF-8'')?"?([^";]+)"?/i.exec(disposition)?.[1];
-      const name = decodeURIComponent(fromHeader ?? url.pathname.split("/").filter(Boolean).pop() ?? "Imported");
+      const rawName = fromHeader ?? url.pathname.split("/").filter(Boolean).pop() ?? "Imported";
+      let name = rawName;
+      try {
+        name = decodeURIComponent(rawName);
+      } catch {
+        /* malformed %-escape: keep the name as sent */
+      }
       return { bytes: bytes.buffer, type: res.headers.get("content-type") ?? "", name };
     }
   } catch (e) {

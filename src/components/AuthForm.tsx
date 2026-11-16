@@ -8,13 +8,14 @@ import { Logo } from "@/components/Logo";
 import { supabase, errorMessage } from "@/lib/supabase";
 import { useSession } from "@/lib/session";
 import { authErrorMessage } from "@/lib/authLinkError";
+import { safeNext } from "@/lib/safeNext";
 
 type Mode = "login" | "signup" | "forgot";
 
 export function AuthForm({ mode }: { mode: Mode }) {
   const router = useRouter();
   const params = useSearchParams();
-  const next = params.get("next") || "/";
+  const next = safeNext(params.get("next"));
   const session = useSession();
   const [name, setName] = useState("");
   const [email, setEmail] = useState(params.get("email") ?? "");
@@ -26,7 +27,7 @@ export function AuthForm({ mode }: { mode: Mode }) {
   const [notice, setNotice] = useState<string | null>(null);
 
   useEffect(() => {
-    if (session && mode !== "forgot") router.replace(next.startsWith("/") ? next : "/");
+    if (session && mode !== "forgot") router.replace(next);
   }, [session, mode, next, router]);
 
   const submit = async (e: React.FormEvent) => {

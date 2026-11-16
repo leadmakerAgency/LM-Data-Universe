@@ -12,6 +12,8 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // Claude Code worktrees (separate checkouts of this repo).
+    ".claude/**",
     // Deno Edge Functions (and the bundled engine) are checked by the Supabase runtime.
     "supabase/functions/**",
   ]),
