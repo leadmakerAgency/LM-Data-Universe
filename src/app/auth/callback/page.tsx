@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Spinner } from "@/components/ui";
 import { supabase, errorMessage } from "@/lib/supabase";
 import { authErrorCode } from "@/lib/authLinkError";
+import { safeNext } from "@/lib/safeNext";
 
 // Landing page for email confirmation links. The browser client exchanges the
 // ?code= parameter for a session on load; we wait for it, then continue.
@@ -14,8 +15,7 @@ export default function AuthCallbackPage() {
 
   useEffect(() => {
     const url = new URL(window.location.href);
-    const next = url.searchParams.get("next") || "/";
-    const target = next.startsWith("/") ? next : "/";
+    const target = safeNext(url.searchParams.get("next"));
     const sb = supabase();
     const code = url.searchParams.get("code");
     const linkError = authErrorCode(url.href);

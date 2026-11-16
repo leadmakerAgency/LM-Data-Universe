@@ -132,6 +132,17 @@ export function AdminScreen() {
   );
 }
 
+/** All 30 days up to today (UTC, like the database's dates), days without changes as 0. */
+function last30Days(daily: { day: string; actions: number }[]): { day: string; actions: number }[] {
+  const byDay = new Map(daily.map((d) => [d.day, Number(d.actions)]));
+  const latest = daily.reduce((m, d) => (d.day > m ? d.day : m), new Date().toISOString().slice(0, 10));
+  const end = Date.parse(`${latest}T00:00:00Z`);
+  return Array.from({ length: 30 }, (_, i) => {
+    const day = new Date(end - (29 - i) * 86_400_000).toISOString().slice(0, 10);
+    return { day, actions: byDay.get(day) ?? 0 };
+  });
+}
+
 function Stat({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="rounded-lg border border-gray-200 bg-white p-4">
@@ -150,7 +161,8 @@ function OverviewTab() {
       .then(({ data, error }) => (error ? toast.error(errorMessage(error)) : setO(data as Overview)));
   }, []);
   if (!o) return <Spinner />;
-  const peak = Math.max(1, ...o.daily.map((d) => Number(d.actions)));
+  const days = last30Days(o.daily);
+  const peak = Math.max(1, ...days.map((d) => d.actions));
   return (
     <div className="space-y-6">
       <div className="grid grid-cols-2 gap-3 md:grid-cols-3 lg:grid-cols-6">
@@ -164,16 +176,31 @@ function OverviewTab() {
       <section className="rounded-lg border border-gray-200 bg-white p-4">
         <h2 className="mb-3 text-sm font-semibold">Changes per day, last 30 days</h2>
         {o.daily.length ? (
-          <div className="flex h-32 items-end gap-1" role="img" aria-label="Changes per day">
-            {o.daily.map((d) => (
-              <div key={d.day} className="group relative flex-1">
-                <div className="rounded-t bg-brand-500/80 group-hover:bg-brand-600" style={{ height: `${(Number(d.actions) / peak) * 120}px` }} />
-                <div className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 hidden -translate-x-1/2 whitespace-nowrap rounded bg-gray-800 px-1.5 py-0.5 text-[11px] text-white group-hover:block">
-                  {d.day}: {num(d.actions)}
-                </div>
+          <>
+            <div className="flex">
+              <div className="flex h-32 w-10 shrink-0 flex-col justify-between pr-2 text-right text-[11px] tabular-nums text-gray-400">
+                <span>{num(peak)}</span>
+                <span>0</span>
               </div>
-            ))}
-          </div>
+              <div className="flex h-32 flex-1 items-end gap-1 border-b border-l border-gray-200" role="img" aria-label="Changes per day">
+                {days.map((d) => (
+                  <div key={d.day} className="group relative flex h-full flex-1 items-end">
+                    <div
+                      className="w-full rounded-t bg-brand-500/80 group-hover:bg-brand-600"
+                      style={{ height: d.actions ? `${Math.max(2, (d.actions / peak) * 128)}px` : 0 }}
+                    />
+                    <div className="pointer-events-none absolute bottom-full left-1/2 z-10 mb-1 hidden -translate-x-1/2 whitespace-nowrap rounded bg-gray-800 px-1.5 py-0.5 text-[11px] text-white group-hover:block">
+                      {d.day}: {num(d.actions)}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="ml-10 mt-1 flex justify-between text-[11px] tabular-nums text-gray-400">
+              <span>{days[0].day}</span>
+              <span>{days[days.length - 1].day}</span>
+            </div>
+          </>
         ) : (
           <p className="text-sm text-gray-500">No activity recorded yet.</p>
         )}
