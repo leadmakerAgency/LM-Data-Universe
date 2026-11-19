@@ -10,6 +10,7 @@ import { isDate, toNumber } from "@engine/values";
 import { getDerived, tableColumns, useDoc } from "@/store/docStore";
 import { useUi } from "@/store/uiStore";
 import { tileTitleText } from "../doc/RecordTile";
+import { OverviewInvoiceTiles } from "../invoices/ClientInvoices";
 
 const DAY = 86_400_000;
 const byLabel = (cols: DocColumn[], label: string, type?: DocColumn["type"]) => cols.find((c) => c.label === label || c.col_id === label) ?? (type ? cols.find((c) => c.type === type) : undefined);
@@ -117,6 +118,7 @@ export function Overview({ wsId, config, client, workspaceName }: { wsId: string
           {planning && <Tile label="Due this week" value={String(stats.due.length)} sub="tasks not done" href={`${base}/${planning.key}${q}`} />}
           {planning && <Tile label="Overdue" value={String(stats.overdue)} sub="tasks past their due date" href={`${base}/${planning.key}${q}`} />}
           {files && <Tile label="Files" value={String(stats.filesTotal)} sub={`${stats.filesWeek} received this week`} href={`${base}/${files.key}${q}`} />}
+          <OverviewInvoiceTiles wsId={wsId} client={client} />
         </div>
 
         <div className="grid gap-4 lg:grid-cols-2">

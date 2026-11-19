@@ -52,6 +52,15 @@ export interface Mail {
   category: string;
   /** Returned with every delivery event, e.g. { lmdu_job: "12" }. */
   args?: Record<string, string>;
+  /** Files, base64 encoded (SendGrid's limit is 30 MB for the whole message). */
+  attachments?: { content: string; filename: string; type: string }[];
+}
+
+/** Base64 of bytes, in chunks (spreading a big array into fromCharCode overflows the stack). */
+export function toBase64(bytes: Uint8Array): string {
+  let s = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) s += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  return btoa(s);
 }
 
 export interface SendResult {
@@ -73,11 +82,12 @@ export async function sendMail(cfg: MailConfig, m: Mail): Promise<SendResult> {
     subject: m.subject || "(no subject)",
     content: [{ type: "text/plain", value: m.text || " " }, ...(m.html ? [{ type: "text/html", value: m.html }] : [])],
     categories: ["lmdu", m.category],
+    attachments: m.attachments?.length ? m.attachments.map((a) => ({ ...a, disposition: "attachment" })) : undefined,
     // These are notifications people asked for, not campaigns: no rewritten links or tracking pixels.
     tracking_settings: { click_tracking: { enable: false, enable_text: false }, open_tracking: { enable: false } },
   };
   if (cfg.dryRun) {
-    console.log(JSON.stringify({ dry_run: true, to: m.to, subject: body.subject, category: m.category }));
+    console.log(JSON.stringify({ dry_run: true, to: m.to, subject: body.subject, category: m.category, attachments: m.attachments?.map((a) => a.filename) }));
     return { error: null, status: 202, retry: false, setup: false };
   }
   try {

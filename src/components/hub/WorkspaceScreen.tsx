@@ -21,6 +21,7 @@ import { FileViewerModal } from "../doc/FileViewer";
 import { ImportDialog } from "../doc/ImportDialog";
 import { RecordCardModal } from "../doc/RecordCard";
 import { RightPanel } from "../doc/RightPanel";
+import { InvoicesSection } from "../invoices/InvoicesSection";
 import { ClientPage } from "./ClientPage";
 import { HubSidebar } from "./HubSidebar";
 import { Overview } from "./Overview";
@@ -31,7 +32,7 @@ const PURPOSES: { type: WidgetType; label: string; icon: SectionIcon }[] = [
   { type: "timeline", label: "A plan over time (launches, schedules)", icon: "gantt" },
   { type: "gallery", label: "A library of files or images", icon: "images" },
   { type: "calendar", label: "A calendar (events, posts, meetings)", icon: "calendar" },
-  { type: "table", label: "A list (invoices, inventory, anything)", icon: "list" },
+  { type: "table", label: "A list (inventory, contracts, anything)", icon: "list" },
 ];
 
 function AddSectionDialog({ config, docId, onDone }: { config: HubConfig; docId: string; onDone: (c: HubConfig | null, key?: string) => void }) {
@@ -89,7 +90,7 @@ function AddSectionDialog({ config, docId, onDone }: { config: HubConfig; docId:
       <div className="space-y-4">
         <div>
           <Label>Name</Label>
-          <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Campaigns, Invoices, Requests" onKeyDown={(e) => e.key === "Enter" && void create()} />
+          <Input autoFocus value={name} onChange={(e) => setName(e.target.value)} placeholder="e.g. Campaigns, Requests, Inventory" onKeyDown={(e) => e.key === "Enter" && void create()} />
         </div>
         <div>
           <Label>What it is for</Label>
@@ -190,6 +191,7 @@ export function WorkspaceScreen({ wsId, path }: { wsId: string; path: string[] }
   const ws = workspaces.find((w) => w.id === wsId);
   const [first, second] = path;
   const active = !first ? "overview" : first === "clients" && second ? "client" : first;
+  const setClient = (id: number | null) => setParam("client", id === null ? null : String(id));
   const section = config?.sections.find((s) => s.key === first);
 
   let body: React.ReactNode;
@@ -210,6 +212,7 @@ export function WorkspaceScreen({ wsId, path }: { wsId: string; path: string[] }
     );
   } else if (active === "client") body = <ClientPage key={second} wsId={wsId} config={config} rowId={Number(second)} />;
   else if (active === "overview") body = <Overview wsId={wsId} config={config} client={client} workspaceName={ws?.name ?? "Workspace"} />;
+  else if (active === "invoices") body = <InvoicesSection wsId={wsId} config={config} invoiceId={second ?? null} client={client} setClient={setClient} />;
   else if (section)
     body = (
       <SectionView
@@ -217,7 +220,7 @@ export function WorkspaceScreen({ wsId, path }: { wsId: string; path: string[] }
         section={section}
         config={config}
         client={client}
-        setClient={(id) => setParam("client", id === null ? null : String(id))}
+        setClient={setClient}
         viewParam={viewParam}
         setViewParam={(id) => setParam("view", id)}
       />

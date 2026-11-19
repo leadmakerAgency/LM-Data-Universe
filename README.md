@@ -20,7 +20,8 @@ and password-reset links come back to the app.
 
 - `supabase/migrations/` – schema, row-level security, sharing and form RPCs, the action log and the formula worker queue (applied in order).
 - `supabase/functions/doc-worker/` – Edge Function that recomputes formulas on the server and writes `doc_rows.computed`.
-- `supabase/functions/deliver/`, `notify/`, `sendgrid-events/`, `_shared/` – webhooks and email (see “Email”).
+- `supabase/functions/deliver/`, `notify/`, `sendgrid-events/`, `_shared/` – webhooks and email (see “Email”); `vat-check/` – EU VAT number lookup for invoices.
+- `src/components/invoices/`, `src/lib/invoices.ts`, `src/lib/invoiceData.ts`, `src/app/i/` – the invoice generator (see “Invoices”).
 - `packages/engine/` – formula parser, evaluator, dependency analysis and server recalculation (`$Col`, `$Ref.Col`, `Table.lookupRecords(...)`, Excel-style functions). No React or Supabase imports; imported as `@engine/*`.
 - `src/lib/actions.ts` – the action types every change is made of, and their local application.
 - `src/lib/format.ts` – per-type display formatting and input parsing.
@@ -351,6 +352,52 @@ Download-all as a zip; undoing a whole import in one step (Ctrl+Z undoes it a th
 at a time); adding, renaming and reordering stacks from the board itself (edit the column's
 choices); creating bars by dragging on empty space; baseline, critical path and lag days.
 
+## Invoices
+
+Sidebar → **Invoices** in every workspace (`/w/<ws>/invoices`, one invoice at
+`/w/<ws>/invoices/<id>`). Plan and decisions: `docs/invoice-generator-plan.md`.
+Migration `20261122100000_invoices.sql`; tests in `supabase/tests/workspace_invoices.sql`,
+`src/lib/__tests__/invoices.test.ts` and `src/components/invoices/__tests__/InvoicePdf.test.tsx`
+(renders real PDFs; `INVOICE_PDF_OUT=<folder>` keeps them for a look).
+
+- **Set up** (workspace owner, first visit): business name, country, currency, language,
+  VAT registered. The country's VAT rates (plus reverse charge, intra-EU and export) and the
+  numbering are created. **Settings** holds the business details printed on invoices (logo,
+  address, VAT and registration numbers, bank account), defaults (design, colour, language,
+  payment terms, notes, terms, footer), email texts, reminders, numbering and tax rates.
+  Several businesses can invoice from one workspace, each with its own number series.
+- **Services**: the catalogue of what you charge for (price, unit, tax); picked on an invoice
+  with "Add a service", copied so later price changes don't touch old invoices.
+- **Writing**: drafts save themselves; the real PDF is previewed beside the form. Bill-to
+  details come from a hub client and are remembered per client; "Check" looks the VAT number
+  up in the EU VIES service (Edge Function `vat-check`). Lines, headings, quantities, units,
+  line and invoice discounts, a tax rate per line; totals per tax rate.
+- **Issuing** checks what the EU VAT Directive (art. 226) requires, gives the next number
+  without gaps (inside a database transaction), locks the invoice (a trigger refuses changes
+  and deletion; corrections are credit notes or voiding) and keeps a copy of the seller's
+  details. The browser then renders the PDF and the UBL / Peppol BIS 3.0 e-invoice XML and
+  stores both in the private `invoices` bucket (`<hub>/<invoice>/<number>.pdf`) with the PDF's
+  SHA-256. If that step is interrupted, "Finish issuing" on the invoice redoes it.
+- **Sending**: Send emails the PDF (and optionally the XML) through `notify` and SendGrid,
+  from your sender address with the business's name and its email as reply-to; `{{link}}`
+  is the online invoice `/i/<token>` (no sign-in; marks the invoice as viewed; shows the
+  balance, bank details, a SEPA payment QR code and a download). Reminders go out
+  automatically on the profile's days around the due date when switched on
+  (cron job `lmdu-invoices-daily`, 06:17 UTC), which also makes the drafts of
+  **recurring** invoices (Repeat on an invoice; the Recurring tab).
+- **Payments**: Record payment (partial payments keep a balance; fully paid sets Paid),
+  removable again. Credit notes reduce what an invoice is owed. Quotes turn into invoices.
+- **Elsewhere**: an Invoices tab on every client's page; Outstanding / Overdue tiles on the
+  Overview; the Invoices list has outstanding, overdue (with ageing), paid this month and
+  drafts, filters by client and status, and CSV export.
+- **Who can do what**: viewers read; editors write, issue, send and record payments;
+  owners change settings, numbering and tax rates.
+- **Designs**: Classic, Modern, Minimal, Bold, any brand colour, Inter font (in `public/fonts`,
+  OFL licence). Languages: en, sl, hr, de, it, es, fr.
+
+Not built yet: online card payment (Stripe), invoicing a won deal or done tasks in one step,
+automation triggers on invoice events, a zip of all PDFs, ECB exchange rates.
+
 ## Email
 
 Migration `20261119100000_mail.sql`; tests in `supabase/tests/mail.sql` and
@@ -437,8 +484,8 @@ This app and a separate email app run on the same Supabase project
 | Schema | `public` | `email_app` |
 | Migrations | `supabase/migrations/` here | named `email_app_*`, kept in that app |
 | Cron jobs | `lmdu-*` | its own |
-| Edge Functions | `doc-worker`, `deliver`, `notify` | its own |
-| Storage | bucket `attachments` | its own |
+| Edge Functions | `doc-worker`, `deliver`, `notify`, `sendgrid-events`, `vat-check` | its own |
+| Storage | buckets `attachments`, `invoices`, `invoice-logos` | its own |
 | Vault secrets | `doc_worker_url`, `doc_worker_secret` | its own |
 | Edge Function secrets | prefixed `LMDU_` (older unprefixed names still read) | its own |
 

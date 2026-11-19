@@ -214,7 +214,7 @@ export function customSectionColumns(purpose: WidgetType): { label: string; type
 /** A unique key for a new section from its name. */
 export function sectionKey(label: string, taken: string[]): string {
   const base = label.toLowerCase().normalize("NFKD").replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 30) || "section";
-  const reserved = new Set([...taken, "overview", "clients", "documents"]);
+  const reserved = new Set([...taken, "overview", "clients", "documents", "invoices"]);
   let key = base;
   for (let i = 2; reserved.has(key); i++) key = `${base}-${i}`;
   return key;

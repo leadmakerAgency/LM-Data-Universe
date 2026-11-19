@@ -13,6 +13,7 @@
     "test:sql": "node scripts/sql-test.mjs"
   },
   "dependencies": {
+    "@react-pdf/renderer": "^4.9.0",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.118.0",
     "@tanstack/react-virtual": "^3.14.25",
@@ -21,6 +22,7 @@
     "lucide-react": "^1.67.0",
     "next": "16.4.6",
     "papaparse": "^5.7.0",
+    "qrcode": "^1.5.4",
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "recharts": "^3.10.1",
@@ -31,6 +33,7 @@
     "@tailwindcss/turbopack": "^4",
     "@types/node": "^20",
     "@types/papaparse": "^5.5.2",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "babel-plugin-react-compiler": "1.0.0",

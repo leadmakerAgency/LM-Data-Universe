@@ -4,7 +4,7 @@
 // sections (Overview, Clients, Pipeline, Planning, Files & assets and any
 // added ones), the workspace's documents, and the shared places.
 import clsx from "clsx";
-import { Building2, CalendarDays, ChevronsUpDown, FileText, Folder, Images, Kanban, LayoutDashboard, LayoutTemplate, List, Plus, SquareChartGantt, Trash2, Users } from "lucide-react";
+import { Building2, CalendarDays, ChevronsUpDown, FileText, Folder, Images, Kanban, LayoutDashboard, LayoutTemplate, List, Plus, Receipt, SquareChartGantt, Trash2, Users } from "lucide-react";
 import Link from "next/link";
 import { useState } from "react";
 import { Logo } from "@/components/Logo";
@@ -94,6 +94,9 @@ export function HubSidebar({
               </Item>
             );
           })}
+        <Item href={`${base}/invoices${q}`} active={active === "invoices"} icon={<Receipt size={16} />}>
+          Invoices
+        </Item>
         {canEdit && (
           <button className="flex w-full items-center gap-2.5 rounded-md px-2.5 py-1.5 text-left text-sm text-gray-500 hover:bg-gray-100 hover:text-brand-700" onClick={onAddSection}>
             <Plus size={16} className="opacity-70" /> Add a section

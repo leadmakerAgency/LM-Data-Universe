@@ -5,7 +5,7 @@
 // The secrets are described in ../_shared/mail.ts. Also sends the test email
 // administrators ask for, and reports whether email is set up.
 import { createClient } from "npm:@supabase/supabase-js@2.49.4";
-import { mailConfig, reportMail, sendMail } from "../_shared/mail.ts";
+import { mailConfig, reportMail, sendMail, toBase64, type Mail } from "../_shared/mail.ts";
 
 const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -13,9 +13,57 @@ const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SE
 
 interface Queued {
   id: number;
-  kind: "invite" | "shared" | "mention" | "test";
+  kind: "invite" | "shared" | "mention" | "test" | "invoice";
   to_email: string;
   payload: Record<string, string>;
+}
+
+// An invoice email (sent or a reminder): the text written in the app, the
+// online-invoice link, and the stored PDF / e-invoice XML attached.
+interface InvoiceMail {
+  invoice: string;
+  mail: "send" | "reminder";
+  to: string[];
+  cc: string[] | null;
+  bcc: string[] | null;
+  from_name: string | null;
+  reply_to: string | null;
+  subject: string;
+  text: string;
+  token: string | null;
+  pdf: string | null;
+  xml: string | null;
+  file_name: string;
+}
+
+async function invoiceMail(q: Queued, appUrl: string): Promise<Mail | { error: string }> {
+  const p = q.payload as unknown as InvoiceMail;
+  const link = p.token ? `${appUrl}/i/${p.token}` : appUrl;
+  const text = p.text.replaceAll("{{link}}", link);
+  const subject = p.subject.replaceAll("{{link}}", link);
+  const attachments: NonNullable<Mail["attachments"]> = [];
+  const name = p.file_name.replace(/[^\w.\-]+/g, "_") || "invoice";
+  for (const [path, type, ext] of [[p.pdf, "application/pdf", "pdf"], [p.xml, "application/xml", "xml"]] as const) {
+    if (!path) continue;
+    const { data, error } = await db.storage.from("invoices").download(path);
+    if (error || !data) return { error: `The ${ext.toUpperCase()} couldn't be read: ${error?.message ?? "missing"}` };
+    attachments.push({ content: toBase64(new Uint8Array(await data.arrayBuffer())), filename: `${name}.${ext}`, type });
+  }
+  const html = `<div style="font-family:system-ui,sans-serif;font-size:15px;line-height:1.5;color:#1f2330;max-width:560px">
+<p>${esc(text).replace(/\n/g, "<br>").replace(esc(link), `<a href="${esc(link)}">${esc(link)}</a>`)}</p></div>`;
+  return {
+    to: p.to?.length ? p.to : [q.to_email],
+    cc: p.cc ?? undefined,
+    bcc: p.bcc ?? undefined,
+    replyTo: p.reply_to || null,
+    fromName: p.from_name || null,
+    subject,
+    text,
+    html,
+    category: p.mail === "reminder" ? "invoice-reminder" : "invoice",
+    args: { lmdu_note: String(q.id), lmdu_invoice: p.invoice },
+    attachments,
+  };
 }
 
 const esc = (s: unknown) =>
@@ -75,8 +123,19 @@ Deno.serve(async (req) => {
   let sent = 0;
   let setupError: string | null = null;
   for (const q of (data ?? []) as Queued[]) {
-    const m = render(q, appUrl);
-    const r = await sendMail(cfg, { to: [q.to_email], subject: m.subject, text: m.text, html: m.html, category: q.kind, args: { lmdu_note: String(q.id) } });
+    let mail: Mail;
+    if (q.kind === "invoice") {
+      const m = await invoiceMail(q, appUrl);
+      if ("error" in m) {
+        await db.rpc("notify_done", { p_secret: secret, p_id: q.id, p_error: m.error });
+        continue;
+      }
+      mail = m;
+    } else {
+      const m = render(q, appUrl);
+      mail = { to: [q.to_email], subject: m.subject, text: m.text, html: m.html, category: q.kind, args: { lmdu_note: String(q.id) } };
+    }
+    const r = await sendMail(cfg, mail);
     if (r.setup) setupError = r.error;
     await db.rpc("notify_done", { p_secret: secret, p_id: q.id, p_error: r.error });
     if (!r.error) sent++;

@@ -20,6 +20,7 @@ import { Activity } from "../doc/RecordCard";
 import { FieldInput } from "../doc/FieldInput";
 import { tileTitleText } from "../doc/RecordTile";
 import { WidgetBody } from "../doc/WidgetFrame";
+import { ClientInvoices } from "../invoices/ClientInvoices";
 
 type Tab = string;
 
@@ -126,7 +127,7 @@ export function ClientPage({ wsId, config, rowId }: { wsId: string; config: HubC
           <Fact label="Files" value={fact("Files")} />
         </div>
         <div className="mt-3 flex gap-1 overflow-x-auto" role="tablist">
-          {[{ key: "details", label: "Details" }, ...tabs, { key: "documents", label: `Documents${linked.length ? ` ${linked.length}` : ""}` }, ...(canEdit ? [{ key: "activity", label: "Activity" }] : [])].map((t) => (
+          {[{ key: "details", label: "Details" }, ...tabs, { key: "invoices", label: "Invoices" }, { key: "documents", label: `Documents${linked.length ? ` ${linked.length}` : ""}` }, ...(canEdit ? [{ key: "activity", label: "Activity" }] : [])].map((t) => (
             <button
               key={t.key}
               role="tab"
@@ -157,6 +158,7 @@ export function ClientPage({ wsId, config, rowId }: { wsId: string; config: HubC
             <WidgetBody key={current.key} widget={view(current)} setOptions={(o) => setOverrides((m) => ({ ...m, [current.key]: { ...(m[current.key] ?? {}), ...o } }))} />
           </ErrorBoundary>
         )}
+        {tab === "invoices" && <ClientInvoices wsId={wsId} rowId={rowId} clientName={name} />}
         {tab === "documents" && (
           <div className="scroll-thin h-full max-w-3xl overflow-auto p-5">
             <p className="mb-3 text-sm text-gray-600">Spreadsheets and data documents that belong to {name}.</p>
