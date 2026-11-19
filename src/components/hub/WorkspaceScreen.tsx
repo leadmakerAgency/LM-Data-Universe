@@ -10,8 +10,9 @@ import { Button, Input, Label, Modal, Select } from "@/components/ui";
 import { ErrorBoundary } from "@/components/ErrorBoundary";
 import { customSectionColumns, hubConfig, openHub, saveHubConfig, sectionKey, type HubConfig, type SectionIcon } from "@/lib/hub";
 import { useRequireSession } from "@/lib/session";
-import { errorMessage, supabase } from "@/lib/supabase";
-import type { Team, WidgetType, Workspace } from "@/lib/types";
+import { errorMessage } from "@/lib/supabase";
+import { rememberWorkspace, useAppData } from "@/lib/appData";
+import type { WidgetType } from "@/lib/types";
 import { useComments } from "@/store/comments";
 import { useDoc } from "@/store/docStore";
 import { toast } from "@/store/toasts";
@@ -23,6 +24,7 @@ import { RecordCardModal } from "../doc/RecordCard";
 import { RightPanel } from "../doc/RightPanel";
 import { InvoicesSection } from "../invoices/InvoicesSection";
 import { ClientPage } from "./ClientPage";
+import { DocumentsView } from "./DocumentsView";
 import { HubSidebar } from "./HubSidebar";
 import { Overview } from "./Overview";
 import { SectionView } from "./SectionView";
@@ -112,8 +114,7 @@ export function WorkspaceScreen({ wsId, path }: { wsId: string; path: string[] }
   const session = useRequireSession();
   const router = useRouter();
   const params = useSearchParams();
-  const [workspaces, setWorkspaces] = useState<Workspace[]>([]);
-  const [teams, setTeams] = useState<Team[]>([]);
+  const app = useAppData(session?.user.id);
   const [hub, setHub] = useState<{ id: string; config: HubConfig | null } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [adding, setAdding] = useState(false);
@@ -140,23 +141,11 @@ export function WorkspaceScreen({ wsId, path }: { wsId: string; path: string[] }
     [params, router],
   );
 
-  useEffect(() => {
-    if (!session) return;
-    void Promise.all([supabase().from("workspaces").select("*").order("created_at"), supabase().from("teams").select("*").order("name")]).then(([w, t]) => {
-      setWorkspaces((w.data as Workspace[] | null) ?? []);
-      setTeams((t.data as Team[] | null) ?? []);
-    });
-  }, [session]);
-
   const open = useCallback(async () => {
     setError(null);
     try {
       setHub(await openHub(wsId));
-      try {
-        window.localStorage.setItem("lmdu-last-ws", wsId);
-      } catch {
-        /* not remembered */
-      }
+      rememberWorkspace(wsId);
     } catch (e) {
       setError(errorMessage(e));
     }
@@ -188,14 +177,16 @@ export function WorkspaceScreen({ wsId, path }: { wsId: string; path: string[] }
   }, [recordCard, config, router, wsId]);
 
   if (!session) return null;
-  const ws = workspaces.find((w) => w.id === wsId);
+  const ws = app.workspaces.find((w) => w.id === wsId);
   const [first, second] = path;
   const active = !first ? "overview" : first === "clients" && second ? "client" : first;
   const setClient = (id: number | null) => setParam("client", id === null ? null : String(id));
   const section = config?.sections.find((s) => s.key === first);
 
   let body: React.ReactNode;
-  if (error) body = <div className="m-8 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
+  // Documents, Shared and Trash don't need the workspace's hub.
+  if (first === "documents" || first === "shared" || first === "trash") body = <DocumentsView key={first} wsId={wsId} mode={first} app={app} userId={session.user.id} />;
+  else if (error) body = <div className="m-8 rounded-lg border border-red-200 bg-red-50 p-4 text-sm text-red-700">{error}</div>;
   else if (!hub || loading || docId !== hub.id) {
     body = (
       <div className="flex h-full items-center justify-center gap-2 text-sm text-gray-500">
@@ -229,7 +220,7 @@ export function WorkspaceScreen({ wsId, path }: { wsId: string; path: string[] }
 
   return (
     <div className="flex h-full bg-gray-50">
-      <HubSidebar workspaces={workspaces} teams={teams} wsId={wsId} sections={config?.sections ?? []} active={active} client={client} canEdit={canEdit && !!config} onAddSection={() => setAdding(true)} />
+      <HubSidebar app={app} userId={session.user.id} wsId={wsId} sections={config?.sections ?? []} active={active} client={client} canEdit={canEdit && !!config} onAddSection={() => setAdding(true)} />
       <main className="min-w-0 flex-1">
         <ErrorBoundary label="This page couldn't be displayed">{body}</ErrorBoundary>
       </main>

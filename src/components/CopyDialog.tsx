@@ -8,7 +8,7 @@ import type { Workspace } from "@/lib/types";
 import { toast } from "@/store/toasts";
 
 /**
- * "Save a copy" (with or without the data, e.g. to use as a template) and
+ * "Save a copy" (with or without the data) and
  * "Work on a copy" (a copy that can later replace the original).
  */
 export function CopyDialog({
@@ -100,7 +100,7 @@ export function CopyDialog({
         {!fork && (
           <label className="flex items-center gap-2">
             <input type="checkbox" checked={!withData} onChange={(e) => setWithData(!e.target.checked)} />
-            Structure only (tables, columns, formulas, pages and widgets, without the records), to use as a template
+            Structure only (tables, columns, formulas, pages and widgets, without the records), to start a similar document
           </label>
         )}
         <p className="text-xs text-gray-400">Attached files aren&apos;t copied; attachment cells in the copy start empty.</p>

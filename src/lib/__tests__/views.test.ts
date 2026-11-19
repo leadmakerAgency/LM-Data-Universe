@@ -1,5 +1,5 @@
 // Board and Timeline logic, the defaults new views start with, file kinds and
-// the Client hub template's consistency.
+// the workspace hub spec's consistency.
 import { describe, expect, it } from "vitest";
 import { RecordRef } from "@engine/values";
 import { ago, groupCards, stackKey, stackValue, stacksFor } from "../board";

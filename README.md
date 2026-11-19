@@ -82,7 +82,7 @@ arrive through public forms.
   be opened read-only (`?snapshot=<id>`), compared with the current version, or restored
   (owners; a snapshot of the current state is saved first; undo history is cleared).
 - **Trash**: deleted documents are kept 30 days (`_purge_trash` runs nightly).
-- **Copies**: "Save a copy" (optionally structure only, as a template) and "Work on a
+- **Copies**: "Save a copy" (optionally structure only) and "Work on a
   copy", which can be compared with and then replace the original (owners).
   Attachments aren't copied.
 - **Email**: invites, "shared with you" and mentions queue in `notification_queue`;
@@ -274,9 +274,14 @@ be trashed, moved or deleted on their own, aren't listed as documents and don't 
   (documents linked with `documents.hub_client`, a new document for the client, link or unlink one) and Activity.
 - **Overview:** open pipeline value, won this month, tasks due this week and overdue, files received this week, deals by stage,
   upcoming tasks; for one client when one is selected.
-- `/` opens the last workspace's Overview; `/?ws=<id>` is its documents list; the Client hub template was removed.
+- **One sidebar for the whole app** (`HubSidebar.tsx`): the workspace switcher (switch, new workspace, new team, and for
+  the open workspace members and sharing, rename, delete; per team members, plan and usage, audit log, rename, delete),
+  the sections, Invoices, then Documents, Shared with me and Trash (`/w/<ws>/documents|shared|trash`,
+  `DocumentsView.tsx`: new document, import CSV / Excel / backup, rename, share, move, duplicate, trash, restore), and the
+  account menu (plan and usage, API keys, admin panel, sign out). There are no templates.
+- `/` opens the last workspace's Overview; older links `/?ws=<id>` (its documents) and `/?view=shared|trash` still work.
 - Not built yet: bulk actions on several cards, keyboard shortcuts for sections, renaming / reordering / hiding sections
-  in the app, moving data from documents made with the old Client hub template, a mobile layout.
+  in the app, a mobile layout.
 
 ## Board, Timeline, Gallery and files
 
@@ -339,12 +344,6 @@ The record popup (`RecordCard.tsx`; also `/doc/<id>?record=<table>:<row>`) has t
 **Files** (its own, with upload and drop, and those of its related records); **Comments**; and
 **Activity** (changes to this record from the action log, for editors and owners, as far as the
 log is visible to them).
-
-### Client hub template
-
-Home → New from template → **Client hub**: Clients, Deals, Tasks, Assets and Datasets, with a
-Pipeline page (deal board with totals, the selected deal's tasks and datasets), a Clients page,
-a Delivery plan (timeline with dependencies, task board with a lane per deal) and an Assets gallery.
 
 ### Not built yet
 

@@ -1,5 +1,5 @@
 // Creates whole documents (or extra tables) from a declarative spec: used by
-// templates, "new blank document" and file imports.
+// "new document", copies and file imports.
 import { defaultFormItems } from "./forms";
 import { guessType, parseInput } from "./format";
 import { labelToIdent, uniqueIdent } from "./ids";
@@ -7,7 +7,7 @@ import { supabase } from "./supabase";
 import { newId, type ApplyResult, type DocAction } from "./actions";
 import type { CellValue, ColumnOptions, ColumnType, DocColumn, WidgetOptions, WidgetType } from "./types";
 
-/** In template rows, `{ $ref: n }` points at the n-th row (0-based) of the Ref column's target table. */
+/** In spec rows, `{ $ref: n }` points at the n-th row (0-based) of the Ref column's target table. */
 export type SpecCell = CellValue | { $ref: number } | { $refs: number[] };
 
 export interface ColumnSpec {
@@ -295,3 +295,9 @@ export async function parseImportFile(file: File): Promise<TableSpec[]> {
   const parsed = Papa.parse<string[]>(text, { skipEmptyLines: true });
   return [tableFromGrid(base, parsed.data)];
 }
+
+/** "New document": one empty table. */
+export const BLANK_DOC: DocSpec = {
+  name: "Untitled document",
+  tables: [{ name: "Table1", columns: [{ label: "A", type: "Any" }, { label: "B", type: "Any" }, { label: "C", type: "Any" }], rows: [] }],
+};
