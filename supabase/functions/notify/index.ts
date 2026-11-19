@@ -99,8 +99,12 @@ function render(q: Queued, appUrl: string): { subject: string; text: string; htm
     cta = "Open LM Data Universe";
   }
   const text = `${line}\n\n${cta}: ${link}\n`;
+  // The logo needs a public address, so only when the app's URL is a real https site.
+  const logo = appUrl.startsWith("https://")
+    ? `<p style="margin:0 0 16px"><img src="${esc(appUrl)}/logo.png" width="32" height="32" alt="LM Data Universe" style="vertical-align:middle"> <strong style="vertical-align:middle">LM Data Universe</strong></p>\n`
+    : "";
   const html = `<div style="font-family:system-ui,sans-serif;font-size:15px;line-height:1.5;color:#1f2330;max-width:520px">
-<p>${esc(line).replace(/\n/g, "<br>")}</p>
+${logo}<p>${esc(line).replace(/\n/g, "<br>")}</p>
 <p><a href="${esc(link)}" style="display:inline-block;background:#5a43d9;color:#fff;padding:10px 16px;border-radius:8px;text-decoration:none">${esc(cta)}</a></p>
 <p style="color:#6b7280;font-size:13px">You received this because someone used your email address in LM Data Universe.</p></div>`;
   return { subject, text, html };
