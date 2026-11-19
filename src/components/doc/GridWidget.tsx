@@ -634,7 +634,7 @@ export function GridWidget({ widget, setOptions }: { widget: DocWidget; setOptio
   const deleteColumn = async (col: DocColumn) => {
     const ok = await confirm({
       title: `Delete column “${col.label || col.col_id}”?`,
-      message: "Its data is removed from every view of this table. This cannot be undone.",
+      message: "It is removed from every view of this table. You can undo this with Ctrl+Z.",
       confirmLabel: "Delete column",
       danger: true,
     });

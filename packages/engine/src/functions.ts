@@ -131,7 +131,7 @@ const F: Record<string, Callable> = {
   },
 
   // ---- text
-  LEN: ([v]) => (v instanceof RecordSet ? v.ids.length : Array.isArray(v) ? v.length : str(v).length),
+  LEN: ([v]) => (v instanceof RecordSet ? v.ids.length : Array.isArray(v) ? v.length : v instanceof Map ? v.size : str(v).length),
   UPPER: ([v]) => str(v).toUpperCase(),
   LOWER: ([v]) => str(v).toLowerCase(),
   PROPER: ([v]) => str(v).toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase()),
@@ -159,7 +159,7 @@ const F: Record<string, Callable> = {
     return str(hay).toLowerCase().includes(str(needle).toLowerCase());
   },
   SPLIT: ([v, sep]) => str(v).split(sep === undefined ? "," : str(sep)).map((s) => s.trim()),
-  TEXT: ([v]) => str(v),
+  TEXT: ([v, fmt]) => (fmt === undefined || fmt === null || fmt === "" ? str(v) : excelFormat(v, str(fmt))),
 
   // ---- dates
   // TODAY(tz): today's date in a time zone ("Europe/Amsterdam"); the engine
@@ -645,11 +645,15 @@ const MORE: Record<string, Callable> = {
     return l.length ? l[l.length - 1] : null;
   },
   COUNTUNIQUE: ([v]) => (F.UNIQUE([v], {}) as unknown[]).length,
-  FILTER: ([v, fn]) => {
+  FILTER: ([a, b]) => {
+    // FILTER(items, fn), or Python's filter(fn, items).
+    const [v, fn] = typeof a === "function" ? [b, a] : [a, b];
     if (typeof fn !== "function") throw new FormulaError("#TypeError", "FILTER needs a function, e.g. FILTER(items, lambda x: x > 0)");
     return list(v).filter((x) => truthy((fn as Callable)([x], {})));
   },
-  MAP: ([v, fn]) => {
+  MAP: ([a, b]) => {
+    // MAP(items, fn), or Python's map(fn, items).
+    const [v, fn] = typeof a === "function" ? [b, a] : [a, b];
     if (typeof fn !== "function") throw new FormulaError("#TypeError", "MAP needs a function, e.g. MAP(items, lambda x: x * 2)");
     return list(v).map((x) => (fn as Callable)([x], {}));
   },
@@ -724,9 +728,120 @@ export function formatSpec(v: unknown, spec: string): string {
   return out;
 }
 
-/** Read-only list methods: items.index(x), items.count(x). */
+const MONTH_NAMES = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+
+/** Excel-style TEXT() formats: "#,##0.00", "0.0%", "000", "$#,##0", and dates such as "yyyy-mm-dd" or "d mmm yyyy hh:mm". */
+function excelFormat(v: unknown, fmt: string): string {
+  if (isDate(v)) {
+    const p2 = (n: number) => String(n).padStart(2, "0");
+    const ampm = /am\/pm/i.test(fmt);
+    const hours = ampm ? v.getUTCHours() % 12 || 12 : v.getUTCHours();
+    let afterHour = false;
+    return fmt.replace(/yyyy|yy|mmmm|mmm|mm|m|dddd|ddd|dd|d|hh|h|ss|s|am\/pm/gi, (tok) => {
+      const t = tok.toLowerCase();
+      // "mm" right after hours (hh:mm) means minutes; otherwise the month.
+      const minutes = (t === "mm" || t === "m") && afterHour;
+      afterHour = t === "hh" || t === "h";
+      switch (t) {
+        case "yyyy":
+          return String(v.getUTCFullYear());
+        case "yy":
+          return p2(v.getUTCFullYear() % 100);
+        case "mmmm":
+          return MONTH_NAMES[v.getUTCMonth()];
+        case "mmm":
+          return MONTH_NAMES[v.getUTCMonth()].slice(0, 3);
+        case "mm":
+          return minutes ? p2(v.getUTCMinutes()) : p2(v.getUTCMonth() + 1);
+        case "m":
+          return minutes ? String(v.getUTCMinutes()) : String(v.getUTCMonth() + 1);
+        case "dddd":
+          return DAY_NAMES[v.getUTCDay()];
+        case "ddd":
+          return DAY_NAMES[v.getUTCDay()].slice(0, 3);
+        case "dd":
+          return p2(v.getUTCDate());
+        case "d":
+          return String(v.getUTCDate());
+        case "hh":
+          return p2(hours);
+        case "h":
+          return String(hours);
+        case "ss":
+          return p2(v.getUTCSeconds());
+        case "s":
+          return String(v.getUTCSeconds());
+        default:
+          return v.getUTCHours() < 12 ? "AM" : "PM";
+      }
+    });
+  }
+  const n = toNumber(v);
+  const m = /[#0][#0,]*(?:\.[#0]+)?/.exec(fmt);
+  if (n === null || typeof v === "string" || !m) return str(v);
+  const [whole, frac = ""] = m[0].split(".");
+  const body = new Intl.NumberFormat("en-US", {
+    minimumIntegerDigits: Math.max(1, (whole.match(/0/g) ?? []).length),
+    minimumFractionDigits: (frac.match(/0/g) ?? []).length,
+    maximumFractionDigits: frac.length,
+    useGrouping: whole.includes(","),
+  }).format(Math.abs(fmt.includes("%") ? n * 100 : n));
+  const sign = n < 0 && /[1-9]/.test(body) ? "-" : "";
+  return fmt.slice(0, m.index) + sign + body + fmt.slice(m.index + m[0].length);
+}
+
+/** List methods. Lists read from cells are copies, so the changing ones only affect the formula's own list. */
 export function listMethod(l: unknown[], name: string): Callable | undefined {
+  const same = (y: unknown, x: unknown) => y === x || (y instanceof RecordRef && x instanceof RecordRef && y.rowId === x.rowId);
+  const grow = (extra: number) => {
+    if (l.length + extra > 100_000) throw new FormulaError("#Error", "The list is too long");
+  };
   switch (name) {
+    case "append":
+      return ([x]) => {
+        grow(1);
+        l.push(x);
+        return null;
+      };
+    case "extend":
+      return ([xs]) => {
+        const items = list(xs);
+        grow(items.length);
+        for (const x of items) l.push(x);
+        return null;
+      };
+    case "insert":
+      return ([i, x]) => {
+        grow(1);
+        l.splice(num(i), 0, x);
+        return null;
+      };
+    case "pop":
+      return ([i]) => {
+        if (!l.length) throw new FormulaError("#IndexError", "pop from an empty list");
+        return i === undefined ? l.pop() : l.splice(num(i), 1)[0];
+      };
+    case "remove":
+      return ([x]) => {
+        const i = l.findIndex((y) => same(y, x));
+        if (i < 0) throw new FormulaError("#ValueError", "Value is not in the list");
+        l.splice(i, 1);
+        return null;
+      };
+    case "reverse":
+      return () => {
+        l.reverse();
+        return null;
+      };
+    case "sort":
+      return (_a, kw) => {
+        const sorted = F.SORTED([l], kw) as unknown[];
+        l.splice(0, l.length, ...sorted);
+        return null;
+      };
+    case "copy":
+      return () => [...l];
     case "index":
       return ([x]) => {
         const i = l.findIndex((y) => y === x || (y instanceof RecordRef && x instanceof RecordRef && y.rowId === x.rowId));
@@ -734,7 +849,7 @@ export function listMethod(l: unknown[], name: string): Callable | undefined {
         return i;
       };
     case "count":
-      return ([x]) => l.filter((y) => y === x).length;
+      return ([x]) => l.filter((y) => same(y, x)).length;
   }
   return undefined;
 }

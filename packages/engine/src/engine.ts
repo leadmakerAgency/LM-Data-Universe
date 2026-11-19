@@ -229,7 +229,7 @@ export class Engine {
       this.column(rec.tableRef, name);
       return null;
     }
-    return this.value(this.column(rec.tableRef, name), rec.rowId);
+    return fresh(this.value(this.column(rec.tableRef, name), rec.rowId));
   }
 
   /** Rows matching field=value pairs, optionally sorted (sort_by / order_by: "Col", "-Col" or a list). */
@@ -323,7 +323,10 @@ export class Engine {
       }
       this.lookupIndex.set(indexKey, index);
     }
-    const wanted = names.map((n) => valueKey(kwargs[n])).join("\u0001");
+    // An empty reference holds no record: Customer=None and Customer=0 both find it.
+    const wanted = names
+      .map((n, i) => (cols[i].type === "Ref" && kwargs[n] === 0 ? valueKey(null) : valueKey(kwargs[n])))
+      .join("\u0001");
     return index.get(wanted) ?? [];
   }
 
@@ -475,7 +478,7 @@ export class Engine {
       case "col":
         if (c.scope?.has("$" + n.name)) return c.scope.get("$" + n.name);
         if (n.name === "id") return c.row;
-        return this.value(this.column(c.table, n.name), c.row);
+        return fresh(this.value(this.column(c.table, n.name), c.row));
       case "name": {
         if (c.scope?.has(n.name)) return c.scope.get(n.name);
         if (n.name === "rec") return new RecordRef(c.table, c.row);
@@ -543,6 +546,15 @@ export class Engine {
         const obj = this.eval(n.obj, c);
         const a = n.start ? toNumber(this.eval(n.start, c)) : null;
         const b = n.end ? toNumber(this.eval(n.end, c)) : null;
+        const step = n.step ? toNumber(this.eval(n.step, c)) : null;
+        if (step !== null && step !== 1) {
+          if (step === 0 || !Number.isInteger(step)) throw new FormulaError("#ValueError", "A slice step must be a whole number other than 0");
+          const items = obj instanceof RecordSet ? obj.ids : typeof obj === "string" ? obj.split("") : Array.isArray(obj) ? obj : null;
+          if (!items) throw new FormulaError("#TypeError", "Cannot slice this value");
+          const picked = stepSlice<unknown>(items, a, b, step);
+          if (typeof obj === "string") return picked.join("");
+          return obj instanceof RecordSet ? new RecordSet(obj.tableRef, picked as number[]) : picked;
+        }
         if (typeof obj === "string") return obj.slice(a ?? 0, b ?? undefined);
         if (obj instanceof RecordSet) return new RecordSet(obj.tableRef, obj.ids.slice(a ?? 0, b ?? undefined));
         if (Array.isArray(obj)) return obj.slice(a ?? 0, b ?? undefined);
@@ -608,6 +620,54 @@ export class Engine {
         return binary(n.op, this.eval(n.left, c), this.eval(n.right, c));
     }
   }
+}
+
+/** Lists read from a cell are copied, so list methods like append() never change stored or cached values. */
+function fresh(v: unknown): unknown {
+  return Array.isArray(v) ? [...v] : v;
+}
+
+/** Python's items[start:stop:step] for a step other than 1. */
+function stepSlice<T>(items: T[], start: number | null, stop: number | null, step: number): T[] {
+  const n = items.length;
+  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+  const norm = (v: number) => (v < 0 ? v + n : v);
+  const out: T[] = [];
+  if (step > 0) {
+    const from = start === null ? 0 : clamp(norm(start), 0, n);
+    const to = stop === null ? n : clamp(norm(stop), 0, n);
+    for (let i = from; i < to; i += step) out.push(items[i]);
+  } else {
+    const from = start === null ? n - 1 : clamp(norm(start), -1, n - 1);
+    const to = stop === null ? -1 : clamp(norm(stop), -1, n - 1);
+    for (let i = from; i > to; i += step) out.push(items[i]);
+  }
+  return out;
+}
+
+/** Python's "text %s" % values: %s %d %i %f %.2f %x %% (and widths such as %5d, %-8s, %05.1f). */
+function percentFormat(fmt: string, arg: unknown): string {
+  const args = Array.isArray(arg) ? arg : [arg];
+  let k = 0;
+  return fmt.replace(/%(-)?(0)?(\d+)?(?:\.(\d+))?([sdifxr%])/g, (_m, left: string, zero: string, width: string, prec: string, type: string) => {
+    if (type === "%") return "%";
+    if (k >= args.length) throw new FormulaError("#TypeError", "Not enough values for the format text");
+    const v = args[k++];
+    let out: string;
+    if (type === "s" || type === "r") out = toText(v);
+    else {
+      const num = toNumber(v);
+      if (num === null) throw new FormulaError("#TypeError", `%${type} needs a number, got "${toText(v)}"`);
+      if (type === "f") out = num.toFixed(prec === undefined ? 6 : Number(prec));
+      else if (type === "x") out = Math.trunc(num).toString(16);
+      else out = String(Math.trunc(num));
+    }
+    const w = width ? Number(width) : 0;
+    if (out.length >= w) return out;
+    if (left) return out.padEnd(w, " ");
+    if (zero && type !== "s" && type !== "r") return out.startsWith("-") ? "-" + out.slice(1).padStart(w - 1, "0") : out.padStart(w, "0");
+    return out.padStart(w, " ");
+  });
 }
 
 /** The `user` object in formulas. */
@@ -739,6 +799,16 @@ function binary(op: string, a: unknown, b: unknown): unknown {
     if (isDate(a)) return new Date(a.getTime() - (toNumber(b) ?? 0) * 86400000);
   }
   if (op === "*" && typeof a === "string") return a.repeat(Math.max(0, toNumber(b) ?? 0));
+  if (op === "*" && (Array.isArray(a) || Array.isArray(b))) {
+    const items = (Array.isArray(a) ? a : b) as unknown[];
+    const other = Array.isArray(a) ? b : a;
+    const times = Array.isArray(other) ? null : toNumber(other);
+    if (times === null) throw new FormulaError("#TypeError", "A list can only be multiplied by a number");
+    const count = Math.max(0, Math.floor(times));
+    if (items.length * count > 100_000) throw new FormulaError("#Error", "The list would be too long");
+    return Array.from({ length: count }, () => items).flat();
+  }
+  if (op === "%" && typeof a === "string") return percentFormat(a, b);
   const x = toNumber(a) ?? 0;
   const y = toNumber(b) ?? 0;
   if (a !== null && a !== undefined && a !== "" && toNumber(a) === null)

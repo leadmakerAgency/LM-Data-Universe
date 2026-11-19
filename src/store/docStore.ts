@@ -5,13 +5,16 @@
 // in order. Undo/redo run on the server from the action log, so they survive
 // reloads. Realtime events from collaborators are merged in as they arrive.
 import { defaultFormItems } from "@/lib/forms";
+import { viewDefaults } from "@/lib/widgetDefaults";
 import { create } from "zustand";
 import type { RealtimeChannel } from "@supabase/supabase-js";
 import { supabase, fetchAll, errorMessage } from "@/lib/supabase";
 import { Engine, type FormulaUser } from "@engine/engine";
 import { applyTriggers } from "@engine/triggers";
 import { initialReverse, reverseRepair, reverseSync } from "@/lib/reverse";
-import { renameColumnInFormula, renameTableInFormula } from "@engine/parser";
+import { renameTableInFormula } from "@engine/parser";
+import { DependencyAnalyzer } from "@engine/deps";
+import { renameColumnRefs } from "@engine/rename";
 import { FormulaError } from "@engine/values";
 import { convertValue, displayValue, parseInput, setFormatSettings, type DisplayContext, type ParseContext } from "@/lib/format";
 import { isValidTimeZone } from "@engine/zone";
@@ -50,6 +53,8 @@ export interface NewWidgetSpec {
   title?: string;
   linkSource?: string | null;
   linkCol?: string | null;
+  /** Link through a reference column of the source widget's table (see WidgetOptions.linkSourceCol). */
+  linkSourceCol?: string | null;
   width?: number;
 }
 
@@ -95,7 +100,7 @@ interface DocState {
   addRows(tableRef: string, rows: { data: Record<string, CellValue>; manual_sort?: number }[], opts?: { undoable?: boolean }): Promise<DocRow[]>;
   deleteRows(tableRef: string, ids: number[], opts?: { undoable?: boolean }): Promise<void>;
   /** Moves rows (in their current relative order) before another row, or to the end. */
-  moveRows(tableRef: string, ids: number[], beforeId: number | null): Promise<void>;
+  moveRows(tableRef: string, ids: number[], beforeId: number | null, values?: Record<string, CellValue>): Promise<void>;
   undo(): Promise<void>;
   redo(): Promise<void>;
 
@@ -508,10 +513,12 @@ export const useDoc = create<DocState>((set, get) => {
       options.builtin = "markdown";
       options.customAccess = "read";
     }
+    if (spec.type === "board" || spec.type === "timeline" || spec.type === "gallery") Object.assign(options, viewDefaults(spec.type, cols, tableRef));
     if (spec.type === "form") {
       options.formItems = defaultFormItems(cols);
       options.formTitle = get().tables.get(tableRef)?.table_id ?? "Form";
     }
+    if (spec.linkSource && spec.linkSourceCol && !spec.linkCol) options.linkSourceCol = spec.linkSourceCol;
     const id = newId();
     actions.push({
       op: "Add",
@@ -524,7 +531,7 @@ export const useDoc = create<DocState>((set, get) => {
         title: spec.title ?? "",
         position,
         width: spec.width ?? (pageWidgets.length ? 6 : 12),
-        height: spec.type === "card" ? 360 : 420,
+        height: spec.type === "card" ? 360 : spec.type === "board" || spec.type === "gallery" ? 520 : 420,
         options,
         link_source: spec.linkSource ?? null,
         link_col: spec.linkCol ?? null,
@@ -946,7 +953,7 @@ export const useDoc = create<DocState>((set, get) => {
       });
     },
 
-    async moveRows(tableRef, ids, beforeId) {
+    async moveRows(tableRef, ids, beforeId, values) {
       if (!ids.length || !get().canEdit()) return;
       const rows = get().rows.get(tableRef);
       if (!rows) return;
@@ -961,7 +968,7 @@ export const useDoc = create<DocState>((set, get) => {
       const lo = prev ?? (next !== undefined ? next - moved.length - 1 : 0);
       const hi = next ?? lo + moved.length + 1;
       const step = (hi - lo) / (moved.length + 1);
-      const records = moved.map((id, i) => ({ id, values: {}, manual_sort: lo + step * (i + 1) }));
+      const records = moved.map((id, i) => ({ id, values: { ...(values ?? {}) }, manual_sort: lo + step * (i + 1) }));
       await commit([{ op: "UpdateRecords", table: tableRef, records }], { optimistic: true, what: "Could not move rows" });
     },
 
@@ -1075,12 +1082,29 @@ export const useDoc = create<DocState>((set, get) => {
       if (Object.keys(changed).length) actions.push({ op: "Update", entity: "column", id: colId, patch: changed });
       actions.push(...cellUpdates(conversions));
       if (next.col_id !== before.col_id) {
-        const cols = [...s.columns.values()].map((c) => (c.id === colId ? { ...c, formula: next.formula } : c));
-        actions.push(
-          ...formulaRewrites(cols, (c) =>
-            c.table_ref === before.table_ref ? renameColumnInFormula(c.formula, before.col_id, next.col_id) : c.formula,
-          ),
-        );
+        // Every formula that refers to the column follows the rename, in any table:
+        // $Old, $Ref.Old, Table.lookupRecords(Old=…), sort_by="Old", conditional styles…
+        const analyzer = new DependencyAnalyzer({ tables: [...s.tables.values()], columns: [...s.columns.values()] });
+        const rewrite = (formula: string, tableRef: string) => renameColumnRefs(formula, tableRef, before, next.col_id, analyzer);
+        const cols = [...s.columns.values()].map((c) => (c.id === colId ? { ...c, formula: next.formula, options: next.options } : c));
+        actions.push(...formulaRewrites(cols, (c) => rewrite(c.formula, c.table_ref)));
+        for (const c of cols) {
+          const rules = c.options.rules?.map((r) => ({ ...r, formula: rewrite(r.formula, c.table_ref) }));
+          const cond = c.options.dropdownCondition ? rewrite(c.options.dropdownCondition, c.table_ref) : c.options.dropdownCondition;
+          const rulesChanged = !!rules && JSON.stringify(rules) !== JSON.stringify(c.options.rules);
+          if (rulesChanged || cond !== c.options.dropdownCondition) {
+            const options = { ...c.options, ...(rules ? { rules } : {}), ...(cond ? { dropdownCondition: cond } : {}) };
+            actions.push({ op: "Update", entity: "column", id: c.id, patch: { options } });
+          }
+        }
+        for (const w of s.widgets.values()) {
+          const tableRef = w.table_ref;
+          if (!tableRef || !w.options.rowRules?.length) continue;
+          const rowRules = w.options.rowRules.map((r) => ({ ...r, formula: rewrite(r.formula, tableRef) }));
+          if (JSON.stringify(rowRules) !== JSON.stringify(w.options.rowRules)) {
+            actions.push({ op: "Update", entity: "widget", id: w.id, patch: { options: { ...w.options, rowRules } } });
+          }
+        }
       }
       if (!actions.length) return true;
       return !!(await commit(actions, { optimistic: true, undoable: opts.undoable, what: "Could not update column" }));

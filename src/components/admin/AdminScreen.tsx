@@ -11,6 +11,7 @@ import { AUDIT_EVENT_GROUPS, describeEvent, downloadAuditCsv, fetchAuditPage, ty
 import { useRequireSession } from "@/lib/session";
 import { errorMessage, supabase } from "@/lib/supabase";
 import { toast } from "@/store/toasts";
+import { MailTab } from "./MailTab";
 
 interface Overview {
   people: number;
@@ -41,7 +42,7 @@ interface Account {
   created_at: string;
 }
 
-type Tab = "overview" | "accounts" | "audit";
+type Tab = "overview" | "accounts" | "mail" | "audit";
 
 const SOURCES: Record<string, string> = {
   "actions.app": "Edits in the app",
@@ -100,7 +101,7 @@ export function AdminScreen() {
           <ShieldCheck size={16} className="text-brand-600" /> Admin panel
         </h1>
         <nav className="ml-4 flex gap-1" role="tablist" aria-label="Admin sections">
-          {(["overview", "accounts", "audit"] as Tab[]).map((t) => (
+          {(["overview", "accounts", "mail", "audit"] as Tab[]).map((t) => (
             <button
               key={t}
               role="tab"
@@ -108,7 +109,7 @@ export function AdminScreen() {
               onClick={() => setTab(t)}
               className={clsx("rounded-md px-3 py-1.5 text-sm", tab === t ? "bg-brand-50 font-medium text-brand-700" : "text-gray-600 hover:bg-gray-100")}
             >
-              {t === "overview" ? "Overview" : t === "accounts" ? "Accounts and plans" : "Audit log"}
+              {t === "overview" ? "Overview" : t === "accounts" ? "Accounts and plans" : t === "mail" ? "Email" : "Audit log"}
             </button>
           ))}
         </nav>
@@ -125,6 +126,7 @@ export function AdminScreen() {
               }}
             />
           )}
+          {tab === "mail" && <MailTab />}
           {tab === "audit" && <AuditTab key={JSON.stringify(auditFilter)} initial={auditFilter} />}
         </div>
       </main>

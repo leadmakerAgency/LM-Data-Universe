@@ -5,7 +5,7 @@
 // on key columns, check the preview, then import.
 import clsx from "clsx";
 import { FileUp, Globe, Loader2 } from "lucide-react";
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, Input, Modal, Select } from "@/components/ui";
 import { COLUMN_TYPES, type CellValue, type ColumnType, type DocColumn } from "@/lib/types";
 import { addTablesToDoc } from "@/lib/docBuilder";
@@ -14,13 +14,14 @@ import { autoMap, googleSheetsExportUrl, guessColumnType, planImport, readFile, 
 import { errorMessage, supabase } from "@/lib/supabase";
 import { displayCtx, tableColumns, useDoc } from "@/store/docStore";
 import { toast } from "@/store/toasts";
+import type { ImportSource } from "@/store/uiStore";
 
 const CHUNK = 1000;
 type Target = string | "new" | null;
 
 const importable = (c: DocColumn) => !c.is_formula && c.type !== "Attachments";
 
-export function ImportDialog({ initialTable, onClose }: { initialTable?: string | null; onClose: () => void }) {
+export function ImportDialog({ initialTable, source: from, onClose }: { initialTable?: string | null; source?: ImportSource | null; onClose: () => void }) {
   const tables = useDoc((s) => s.tables);
   const sorted = useMemo(() => [...tables.values()].sort((a, b) => a.position - b.position), [tables]);
   const [sheets, setSheets] = useState<Sheet[] | null>(null);
@@ -62,6 +63,62 @@ export function ImportDialog({ initialTable, onClose }: { initialTable?: string 
     setSheetIx(0);
     setSource(label);
     prepare(list[0], dest);
+  };
+
+  // Opened from an attached file: its sheets are already read. With a preset
+  // (updating from a new version of the file), repeat the earlier mapping.
+  useEffect(() => {
+    if (!from) return;
+    const t = setTimeout(() => {
+      try {
+        const p = from.preset && useDoc.getState().tables.has(from.preset.tableRef) ? from.preset : null;
+        setSheets(from.sheets);
+        setSheetIx(0);
+        setSource(from.label);
+        const first = from.sheets[0];
+        if (!first) return;
+        if (p) {
+          setDest(p.tableRef);
+          prepare(first, p.tableRef);
+          const known = new Set(tableColumns(p.tableRef).map((c) => c.id));
+          const byHeader = new Map(p.mapping.map((m) => [m.header, m.col]));
+          setTargets(first.header.map((h) => (byHeader.has(h) && known.has(byHeader.get(h)!) ? byHeader.get(h)! : null)));
+          setKeys(p.keys.filter((k) => known.has(k)));
+          setMode(p.mode === "add" && p.keys.length ? "upsert" : p.mode);
+        } else {
+          prepare(first, dest);
+        }
+      } catch (e) {
+        toast.error(errorMessage(e));
+      }
+    }, 0);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [from]);
+
+  /** Notes the import in the document's import history (best effort: never fails the import). */
+  const record = async (tableRef: string | null, how: "new" | "add" | "update", map: { header: string; col: string }[], added: number, updated: number) => {
+    const docId = useDoc.getState().docId;
+    if (!docId || !sheet) return;
+    const { data: auth } = await supabase().auth.getUser();
+    if (!auth.user) return;
+    await supabase()
+      .from("doc_imports")
+      .insert({
+        doc_id: docId,
+        attachment_id: from?.attachment?.id ?? null,
+        file_name: (from?.attachment?.file_name ?? source ?? sheet.name ?? "Import").slice(0, 255) || "Import",
+        file_version: from?.attachment?.version ?? null,
+        sheet: sheet.name,
+        table_ref: tableRef,
+        mode: how,
+        mapping: map,
+        key_cols: how === "new" ? [] : keys,
+        rows_added: added,
+        rows_updated: updated,
+        created_by: auth.user.id,
+      })
+      .then(() => undefined, () => undefined);
   };
 
   const loadFile = async (file: File) => {
@@ -135,7 +192,7 @@ export function ImportDialog({ initialTable, onClose }: { initialTable?: string 
       if (dest === "new") {
         setBusy("Creating the table…");
         const used = sheet.header.map((_, i) => i).filter((i) => targets[i] === "new");
-        await addTablesToDoc(
+        const made = await addTablesToDoc(
           docId,
           [
             {
@@ -154,6 +211,9 @@ export function ImportDialog({ initialTable, onClose }: { initialTable?: string 
           { existingTableIds: sorted.map((t) => t.table_id), startPosition: Math.max(0, ...sorted.map((t) => t.position)) },
         );
         await useDoc.getState().load(docId);
+        const newTable = [...made.values()][0] ?? null;
+        const newCols = newTable ? tableColumns(newTable) : [];
+        await record(newTable, "new", used.map((i, k) => ({ header: sheet.header[i], col: newCols[k]?.id ?? "" })).filter((m) => m.col), sheet.rows.length, 0);
         toast.success(`Imported ${sheet.rows.length} records into a new table`);
         onClose();
         return;
@@ -181,6 +241,7 @@ export function ImportDialog({ initialTable, onClose }: { initialTable?: string 
         await send([{ op: "AddRecords", table: dest, records: final.adds.slice(i, i + CHUNK).map((data) => ({ data })) }]);
       }
       await useDoc.getState().load(docId);
+      await record(dest, mode === "add" ? "add" : "update", real.map((c, i) => ({ header: sheet.header[i], col: c?.id ?? "" })).filter((m) => m.col), final.adds.length, final.updates.length);
       toast.success(
         [final.adds.length && `${final.adds.length} added`, final.updates.length && `${final.updates.length} updated`, final.unchanged && `${final.unchanged} unchanged`]
           .filter(Boolean)

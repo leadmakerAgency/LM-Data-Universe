@@ -1,7 +1,7 @@
 "use client";
 
 import clsx from "clsx";
-import { Download, FileText, Paperclip, Trash2, Upload } from "lucide-react";
+import { Download, FileText, Maximize2, Paperclip, Trash2, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { IconButton, Modal, Spinner } from "@/components/ui";
 import {
@@ -18,6 +18,7 @@ import {
 import type { DocColumn } from "@/lib/types";
 import { useDoc } from "@/store/docStore";
 import { toast } from "@/store/toasts";
+import { useUi } from "@/store/uiStore";
 
 function useSignedUrl(m: AttachmentMeta | undefined, enabled = true) {
   const [url, setUrl] = useState<string | null>(null);
@@ -235,6 +236,9 @@ function FileRow({
           {m && <span className="text-xs text-gray-500">{formatBytes(m.size)}</span>}
         </span>
       </button>
+      <IconButton title="Open: preview, versions, import a spreadsheet into a table" onClick={() => useUi.getState().openFile({ id })} disabled={!m}>
+        <Maximize2 size={15} />
+      </IconButton>
       <IconButton title="Download" onClick={download} disabled={!m}>
         <Download size={15} />
       </IconButton>

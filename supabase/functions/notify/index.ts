@@ -2,11 +2,10 @@
 // SendGrid. Called every minute by pg_cron (see *_notify_delivery.sql) with
 // the formula worker's shared secret.
 //
-// Secrets (supabase secrets set ...):
-//   SENDGRID_API_KEY  SendGrid API key with Mail Send permission
-//   NOTIFY_FROM       verified sender, e.g. "LM Data Universe <noreply@yourdomain>"
-//   APP_URL           where the app runs, e.g. https://data.yourdomain.com
+// The secrets are described in ../_shared/mail.ts. Also sends the test email
+// administrators ask for, and reports whether email is set up.
 import { createClient } from "npm:@supabase/supabase-js@2.49.4";
+import { mailConfig, reportMail, sendMail } from "../_shared/mail.ts";
 
 const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
   auth: { persistSession: false, autoRefreshToken: false },
@@ -14,7 +13,7 @@ const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SE
 
 interface Queued {
   id: number;
-  kind: "invite" | "shared" | "mention";
+  kind: "invite" | "shared" | "mention" | "test";
   to_email: string;
   payload: Record<string, string>;
 }
@@ -30,7 +29,12 @@ function render(q: Queued, appUrl: string): { subject: string; text: string; htm
   let line: string;
   let link: string;
   let cta: string;
-  if (q.kind === "mention") {
+  if (q.kind === "test") {
+    subject = "Test email from LM Data Universe";
+    line = "This is a test email. If you can read it, LM Data Universe can send email.";
+    link = appUrl;
+    cta = "Open LM Data Universe";
+  } else if (q.kind === "mention") {
     subject = `${p.by} mentioned you in ${p.doc}`;
     line = `${p.by} mentioned you in a comment in “${p.doc}”:\n\n“${p.body}”`;
     link = `${appUrl}/doc/${p.doc_id}?comment=${p.comment_id}`;
@@ -54,47 +58,29 @@ function render(q: Queued, appUrl: string): { subject: string; text: string; htm
   return { subject, text, html };
 }
 
-function parseFrom(from: string): { email: string; name?: string } {
-  const m = /^(.*)<([^>]+)>\s*$/.exec(from);
-  return m ? { name: m[1].trim().replace(/^"|"$/g, "") || undefined, email: m[2].trim() } : { email: from.trim() };
-}
-
 Deno.serve(async (req) => {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
   const secret = req.headers.get("x-worker-secret") ?? "";
-  const key = Deno.env.get("SENDGRID_API_KEY");
-  const from = Deno.env.get("NOTIFY_FROM");
-  const appUrl = (Deno.env.get("APP_URL") ?? "http://localhost:3000").replace(/\/$/, "");
   if (!secret) return new Response("Bad request", { status: 400 });
-  // Not configured yet: leave the queue alone so nothing is lost.
-  if (!key || !from) return new Response(JSON.stringify({ skipped: "SENDGRID_API_KEY / NOTIFY_FROM not set" }), { status: 503 });
+  const cfg = mailConfig();
+  const appUrl = cfg.appUrl || "http://localhost:3000";
+  // Not configured yet: leave the queue alone so nothing is lost, and say so in the app.
+  if (!cfg.key || !cfg.from) {
+    await reportMail(db, secret, cfg, false, "The SendGrid key and sender address aren't set");
+    return new Response(JSON.stringify({ skipped: "LMDU_SENDGRID_API_KEY / LMDU_MAIL_FROM not set" }), { status: 503 });
+  }
 
   const { data, error } = await db.rpc("notify_claim", { p_secret: secret, p_limit: 50 });
   if (error) return new Response(error.message, { status: 403 });
   let sent = 0;
+  let setupError: string | null = null;
   for (const q of (data ?? []) as Queued[]) {
     const m = render(q, appUrl);
-    let err: string | null = null;
-    try {
-      const res = await fetch("https://api.sendgrid.com/v3/mail/send", {
-        method: "POST",
-        headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-        body: JSON.stringify({
-          personalizations: [{ to: [{ email: q.to_email }] }],
-          from: parseFrom(from),
-          subject: m.subject,
-          content: [
-            { type: "text/plain", value: m.text },
-            { type: "text/html", value: m.html },
-          ],
-        }),
-      });
-      if (!res.ok) err = `SendGrid ${res.status}: ${(await res.text()).slice(0, 500)}`;
-    } catch (e) {
-      err = e instanceof Error ? e.message : String(e);
-    }
-    await db.rpc("notify_done", { p_secret: secret, p_id: q.id, p_error: err });
-    if (!err) sent++;
+    const r = await sendMail(cfg, { to: [q.to_email], subject: m.subject, text: m.text, html: m.html, category: q.kind, args: { lmdu_note: String(q.id) } });
+    if (r.setup) setupError = r.error;
+    await db.rpc("notify_done", { p_secret: secret, p_id: q.id, p_error: r.error });
+    if (!r.error) sent++;
   }
+  if (data?.length) await reportMail(db, secret, cfg, setupError === null, setupError);
   return new Response(JSON.stringify({ sent, claimed: data?.length ?? 0 }), { headers: { "Content-Type": "application/json" } });
 });

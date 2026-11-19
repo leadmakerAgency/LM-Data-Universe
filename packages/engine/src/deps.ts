@@ -42,7 +42,7 @@ const ANY: Kind = { k: "any" };
 const VALUE_ATTRS = new Set([
   "upper", "lower", "strip", "title", "capitalize", "replace", "split", "startswith", "endswith", "find", "count",
   "lstrip", "rstrip", "join", "isdigit", "isalpha", "isupper", "islower", "zfill", "ljust", "rjust", "center", "format",
-  "partition", "index", "get", "keys", "values", "items",
+  "partition", "index", "get", "keys", "values", "items", "append", "extend", "insert", "pop", "remove", "reverse", "sort", "copy",
   "year", "month", "day", "hour", "minute", "second", "weekday", "isoweekday", "isoformat", "date", "strftime",
 ]);
 
@@ -51,10 +51,10 @@ const ROW_FUNCS = new Set(["PREVIOUS", "NEXT", "RANK"]);
 
 type Locals = Map<string, Kind>;
 
-/** String literals in an argument: "Col", ("A", "-B"), ["A"]. */
-function literalNames(n: Node | undefined): string[] {
+/** String literals in an argument: "Col", ("A", "-B"), ["A"]; with where each literal starts in the source. */
+function literalNames(n: Node | undefined): { name: string; pos: number | undefined }[] {
   if (!n) return [];
-  if (n.t === "str") return [n.v.replace(/^-/, "")];
+  if (n.t === "str") return [{ name: n.v.replace(/^-/, ""), pos: n.pos }];
   if (n.t === "list") return n.items.flatMap(literalNames);
   return [];
 }
@@ -62,6 +62,12 @@ function literalNames(n: Node | undefined): string[] {
 export class DependencyAnalyzer {
   private tableByName = new Map<string, DocTable>();
   private colByName = new Map<string, DocColumn>();
+  private src = "";
+  /**
+   * Called for every column a formula refers to by name, with the offset of
+   * that name in the formula text when it is known (see rename.ts).
+   */
+  onColumn: ((col: DocColumn, start: number | undefined) => void) | null = null;
 
   constructor(schema: SchemaInfo) {
     // Each iterable is read exactly once.
@@ -77,6 +83,7 @@ export class DependencyAnalyzer {
     } catch {
       return deps; // a syntax error doesn't depend on any data
     }
+    this.src = col.formula;
     this.walk(ast, col.table_ref, deps, new Map());
     return deps;
   }
@@ -88,11 +95,12 @@ export class DependencyAnalyzer {
     return VALUE;
   }
 
-  private field(table: string, name: string, deps: FormulaDeps): Kind {
+  private field(table: string, name: string, deps: FormulaDeps, start?: number): Kind {
     if (name === "id") return VALUE;
     const c = this.colByName.get(`${table}|${name}`);
     if (!c) return VALUE; // evaluates to #NAME?; adding the column is a schema change
     deps.cols.add(c.id);
+    this.onColumn?.(c, start);
     return this.columnKind(c);
   }
 
@@ -100,7 +108,11 @@ export class DependencyAnalyzer {
     if (!n) return;
     const names = literalNames(n);
     if (!names.length && n.t !== "const") deps.dynamic = true; // computed column names
-    for (const name of names) this.field(table, name, deps);
+    for (const { name, pos } of names) {
+      // The name follows the opening quote and an optional "-" (descending).
+      const open = pos === undefined ? null : /^[rR]?(?:'''|"""|'|")-?/.exec(this.src.slice(pos, pos + 5));
+      this.field(table, name, deps, open && pos !== undefined ? pos + open[0].length : undefined);
+    }
   }
 
   private walkStmts(body: Stmt[], table: string, deps: FormulaDeps, locals: Locals) {
@@ -150,7 +162,7 @@ export class DependencyAnalyzer {
       case "const":
         return VALUE;
       case "col":
-        return this.field(table, n.name, deps);
+        return this.field(table, n.name, deps, n.pos === undefined ? undefined : n.pos + 1);
       case "name": {
         const local = locals.get(n.name);
         if (local) return local;
@@ -166,10 +178,10 @@ export class DependencyAnalyzer {
           case "record":
             // A removed target row empties the reference, so its table's rows matter too.
             if (obj.table !== table) deps.tables.add(obj.table);
-            return this.field(obj.table, n.name, deps);
+            return this.field(obj.table, n.name, deps, n.pos);
           case "records": {
             deps.tables.add(obj.table);
-            const kind = this.field(obj.table, n.name, deps);
+            const kind = this.field(obj.table, n.name, deps, n.pos);
             return kind.k === "value" ? VALUE : ANY;
           }
           case "table":
@@ -215,7 +227,7 @@ export class DependencyAnalyzer {
           for (const kw of n.kwargs) {
             this.walk(kw.value, table, deps, locals);
             if (kw.name === "sort_by" || kw.name === "order_by") this.sortCols(target.table, kw.value, deps);
-            else this.field(target.table, kw.name, deps);
+            else this.field(target.table, kw.name, deps, kw.pos);
           }
           return { k: "record", table: target.table };
         }
@@ -226,7 +238,7 @@ export class DependencyAnalyzer {
           for (const kw of n.kwargs) {
             this.walk(kw.value, table, deps, locals);
             if (kw.name === "sort_by" || kw.name === "order_by") this.sortCols(fn.table, kw.value, deps);
-            else this.field(fn.table, kw.name, deps);
+            else this.field(fn.table, kw.name, deps, kw.pos);
           }
           return fn.one ? { k: "record", table: fn.table } : { k: "records", table: fn.table };
         }

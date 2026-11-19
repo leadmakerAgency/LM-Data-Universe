@@ -8,7 +8,9 @@ import { ArrowDownAZ, ArrowUpAZ, Eye, EyeOff, Trash2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button, IconButton, Input, Label, Select, useDialogs } from "@/components/ui";
 import { CellContent } from "./CellContent";
-import { linkOptions } from "./AddWidgetDialog";
+import { currentLinkKey, linkOptions } from "./AddWidgetDialog";
+import { viewDefaults } from "@/lib/widgetDefaults";
+import { ViewOptions } from "./ViewOptions";
 import { RulesEditor, StyleEditor } from "./StyleEditors";
 import { CARD_THEMES, cardFields } from "@/lib/cardLayout";
 import { detachSummary } from "@/lib/summary";
@@ -561,6 +563,7 @@ function defaultOptionsFor(type: WidgetType, tableRef: string | null): WidgetOpt
     return { calStart: cols.find((c) => c.type === "Date" || c.type === "DateTime")?.id ?? null, calTitle: cols.find((c) => c.type === "Text")?.id ?? null, calView: "month" };
   }
   if (type === "custom") return { builtin: "markdown", customAccess: "read" };
+  if (type === "board" || type === "timeline" || type === "gallery") return viewDefaults(type, cols, tableRef);
   return {};
 }
 
@@ -587,7 +590,7 @@ function WidgetPanel({ widget }: { widget: DocWidget }) {
     return true;
   });
   const links = linkOptions(widget.table_ref, candidates);
-  const currentLink = widget.link_source ? `${widget.link_source}|${widget.link_col ?? ""}` : "";
+  const currentLink = currentLinkKey(widget);
   const hidden = new Set(o.hidden ?? []);
   const numeric = cols.filter((c) => c.type === "Numeric" || c.type === "Int");
 
@@ -626,7 +629,7 @@ function WidgetPanel({ widget }: { widget: DocWidget }) {
           disabled={!canEdit}
           onChange={(e) => {
             const l = links.find((x) => x.key === e.target.value);
-            update({ link_source: l?.sourceId ?? null, link_col: l?.linkCol ?? null });
+            update({ link_source: l?.sourceId ?? null, link_col: l?.linkCol ?? null, options: { linkSourceCol: l?.sourceCol ?? null } });
           }}
         >
           <option value="">Not linked</option>
@@ -639,7 +642,11 @@ function WidgetPanel({ widget }: { widget: DocWidget }) {
         {!links.length && <p className="text-xs text-gray-500">Add a Reference column pointing to another widget&apos;s table to link them.</p>}
       </Section>
 
-      {widget.type === "table" && widget.table_ref && (
+      {(widget.type === "board" || widget.type === "timeline" || widget.type === "gallery") && widget.table_ref && (
+        <ViewOptions widget={widget} canEdit={canEdit} setOpt={setOpt} />
+      )}
+
+      {(widget.type === "table" || widget.type === "board" || widget.type === "gallery") && widget.table_ref && (
         <Section title="Row styles">
           <RulesEditor
             rules={o.rowRules ?? []}

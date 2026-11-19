@@ -5,6 +5,9 @@ import {
   BarChart3,
   CalendarDays,
   ClipboardList,
+  SquareChartGantt,
+  Images,
+  Kanban,
   Copy,
   Download,
   LayoutGrid,
@@ -27,6 +30,9 @@ import { CardListWidget, CardWidget } from "./CardWidgets";
 import { ChartWidget, SummaryWidget } from "./ChartSummaryWidgets";
 import { CalendarWidget } from "./CalendarWidget";
 import { CustomWidget } from "./CustomWidget";
+import { BoardWidget } from "./BoardWidget";
+import { GalleryWidget } from "./GalleryWidget";
+import { TimelineWidget } from "./TimelineWidget";
 import { FormWidget } from "./FormWidget";
 import { GridWidget } from "./GridWidget";
 import { exportWidgetCsv } from "@/lib/exporter";
@@ -44,6 +50,9 @@ export const WIDGET_ICONS: Record<WidgetType, React.ComponentType<{ size?: numbe
   form: ClipboardList,
   calendar: CalendarDays,
   custom: Puzzle,
+  board: Kanban,
+  timeline: SquareChartGantt,
+  gallery: Images,
 };
 
 export function widgetTitle(w: DocWidget): string {
@@ -71,6 +80,12 @@ export function WidgetBody({ widget, setOptions }: { widget: DocWidget; setOptio
       return <CalendarWidget widget={widget} />;
     case "custom":
       return <CustomWidget widget={widget} setOptions={setOptions} />;
+    case "board":
+      return <BoardWidget widget={widget} setOptions={setOptions} />;
+    case "timeline":
+      return <TimelineWidget widget={widget} setOptions={setOptions} />;
+    case "gallery":
+      return <GalleryWidget widget={widget} />;
   }
 }
 
@@ -172,7 +187,7 @@ export function WidgetFrame({ widget: saved, siblings }: { widget: DocWidget; si
     const startW = widget.width;
     let latest = startW;
     const onMove = (ev: MouseEvent) => {
-      latest = Math.max(2, Math.min(12, Math.round(startW + (ev.clientX - startX) / colW)));
+      latest = Math.max(3, Math.min(12, Math.round(startW + (ev.clientX - startX) / colW)));
       setLiveWidth(latest);
     };
     const onUp = () => {

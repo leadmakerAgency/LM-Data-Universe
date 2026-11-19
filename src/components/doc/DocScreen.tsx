@@ -6,6 +6,7 @@ import {
   ChevronDown,
   ChevronUp,
   Database,
+  FolderOpen,
   Download,
   FileText,
   LayoutPanelLeft,
@@ -42,6 +43,8 @@ import { AccessRulesView } from "./AccessRules";
 import { IntegrationsView } from "./Integrations";
 import { RightPanel } from "./RightPanel";
 import { RecordCardModal } from "./RecordCard";
+import { FileViewerModal } from "./FileViewer";
+import { FilesView } from "./FilesView";
 import { WidgetFrame } from "./WidgetFrame";
 import { exportBackup, exportDocXlsx, exportTable } from "@/lib/exporter";
 import { ImportDialog } from "./ImportDialog";
@@ -88,6 +91,7 @@ export function DocScreen({ docId }: { docId: string }) {
   const [pageMenu, setPageMenu] = useState<{ el: HTMLElement; id: string } | null>(null);
   const [exportMenu, setExportMenu] = useState<HTMLElement | null>(null);
   const [importing, setImporting] = useState(false);
+  const importSource = useUi((s) => s.importSource);
   const tablesMap = useDoc((s) => s.tables);
   const sortedTables = useMemo(() => [...tablesMap.values()].sort((a, b) => a.position - b.position), [tablesMap]);
   const [sharing, setSharing] = useState(false);
@@ -151,7 +155,7 @@ export function DocScreen({ docId }: { docId: string }) {
 
   // Default to the first page; fall back when the active page disappears.
   useEffect(() => {
-    if (activePage === "raw" || activePage === "access" || activePage === "integrations") return;
+    if (activePage === "raw" || activePage === "files" || activePage === "access" || activePage === "integrations") return;
     if (!activePage || !pages.some((p) => p.id === activePage)) {
       const wanted = embedPage && pages.some((p) => p.id === embedPage) ? embedPage : null;
       setActivePage(wanted ?? pages[0]?.id ?? (doc ? "raw" : null));
@@ -171,6 +175,16 @@ export function DocScreen({ docId }: { docId: string }) {
     return () => leavePresence();
   }, [docLoaded, docId, me?.UserID, me?.Name, me?.Email]);
   const peers = usePresence((s) => s.peers);
+
+  // ?record=<table>:<row> (the {{record_link}} of automation emails) opens that record's card.
+  useEffect(() => {
+    if (!docLoaded) return;
+    const m = /^([0-9a-f-]{36}):(\d+)$/i.exec(new URLSearchParams(window.location.search).get("record") ?? "");
+    if (!m) return;
+    const rowId = Number(m[2]);
+    if (useDoc.getState().rows.get(m[1])?.has(rowId)) useUi.getState().openRecordCard({ tableRef: m[1], rowId });
+    else toast.info("That record doesn't exist any more, or you can't see it.");
+  }, [docLoaded, docId]);
 
   // Comments: load with the document; ?comment=<id> (from a mention email) opens its thread.
   useEffect(() => {
@@ -400,6 +414,15 @@ export function DocScreen({ docId }: { docId: string }) {
             >
               <Database size={15} className="opacity-60" /> Raw data
             </button>
+            <button
+              onClick={() => setActivePage("files")}
+              className={clsx(
+                "flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-sm",
+                activePage === "files" ? "bg-brand-50 font-medium text-brand-700" : "text-gray-700 hover:bg-gray-100",
+              )}
+            >
+              <FolderOpen size={15} className="opacity-60" /> Files
+            </button>
             {showAccessRules && (
               <button
                 onClick={() => setActivePage("access")}
@@ -429,7 +452,11 @@ export function DocScreen({ docId }: { docId: string }) {
 
         {/* content */}
         <main className="scroll-thin min-w-0 flex-1 overflow-auto bg-gray-50 p-4">
-          {activePage === "raw" ? (
+          {activePage === "files" ? (
+            <div className="scroll-thin h-full overflow-auto p-6">
+              <FilesView />
+            </div>
+          ) : activePage === "raw" ? (
             <ErrorBoundary label="Raw data couldn't be displayed">
               <RawDataView />
             </ErrorBoundary>
@@ -561,6 +588,8 @@ export function DocScreen({ docId }: { docId: string }) {
         )}
       </Popover>
       {importing && <ImportDialog onClose={() => setImporting(false)} />}
+      {importSource && <ImportDialog key={importSource.label + (importSource.attachment?.id ?? "")} source={importSource} onClose={() => useUi.getState().importFrom(null)} />}
+      <FileViewerModal />
       {settingsOpen && <DocSettingsDialog onClose={() => setSettingsOpen(false)} />}
       {shortcutsOpen && <ShortcutsDialog onClose={() => setShortcutsOpen(false)} />}
 

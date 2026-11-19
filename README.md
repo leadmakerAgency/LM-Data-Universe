@@ -20,6 +20,7 @@ and password-reset links come back to the app.
 
 - `supabase/migrations/` – schema, row-level security, sharing and form RPCs, the action log and the formula worker queue (applied in order).
 - `supabase/functions/doc-worker/` – Edge Function that recomputes formulas on the server and writes `doc_rows.computed`.
+- `supabase/functions/deliver/`, `notify/`, `sendgrid-events/`, `_shared/` – webhooks and email (see “Email”).
 - `packages/engine/` – formula parser, evaluator, dependency analysis and server recalculation (`$Col`, `$Ref.Col`, `Table.lookupRecords(...)`, Excel-style functions). No React or Supabase imports; imported as `@engine/*`.
 - `src/lib/actions.ts` – the action types every change is made of, and their local application.
 - `src/lib/format.ts` – per-type display formatting and input parsing.
@@ -45,6 +46,17 @@ small program with local variables, `if/elif/else`, `for` loops, `return`
 f-strings, tuples, slices and dicts. Over 150 functions (Excel-style and
 Python builtins), sorted lookups (`lookupRecords(..., sort_by="-Date")`),
 `PREVIOUS` / `NEXT` / `RANK`, `VLOOKUP` and the `user` object are available.
+Comparisons chain as in Python (`1 < $Qty <= 10`), lists made in a formula can
+be changed (`out.append(x)`, `sort`, `pop`…; lists read from cells are copies),
+slices take a step (`items[::2]`), `"%s: %d" % (a, b)` formats text and
+`TEXT(value, "#,##0.00")` / `TEXT(date, "d mmm yyyy")` follow Excel formats.
+`try`, `import`, `while`, `def`, `class` and `with` aren't supported and say so.
+
+Renaming a column rewrites the formulas that refer to it in every table
+(`$Old`, `$Ref.Old`, `Table.lookupRecords(Old=…)`, `sort_by="Old"`), as well as
+conditional-style and dropdown conditions (`packages/engine/src/rename.ts`).
+References inside f-strings and on values whose table can't be known ahead of
+time (e.g. a column of type Any) are left as they are.
 The engine lives in `packages/engine` and is shared by the browser and the
 `doc-worker` Edge Function.
 
@@ -231,6 +243,196 @@ Migration `20261112100000_phase6_platform.sql`; tests in `supabase/tests/platfor
 - `Ctrl+Alt+M` comments on the cell; `Space` opens the record card; `Ctrl+F` finds across the page's tables (Enter / Shift+Enter)
 - Drag a column header or a row number to reorder; double-click a column edge to fit it
 - Sorting and filtering are unsaved (per viewer) until **Save** in the widget header
+
+## Linking widgets
+
+"Select by" in the widget options (or when adding a widget) offers, per widget on the page:
+the same record (same table), the records in a summary group, the records that point at the
+selected one through a Reference column of this table (`link_col`), and the other way round,
+the record(s) the selected one points at through its own Reference column ("Orders → its
+Customer", stored as `options.linkSourceCol`): a Reference moves the cursor there, a Reference
+List shows just those records.
+
+## Board, Timeline, Gallery and files
+
+Migration `20261120100000_views_and_files.sql`; tests in `supabase/tests/views.sql` and
+`src/lib/__tests__/views.test.ts`; plan and reasoning in `docs/views-and-files-plan.md`.
+The idea: every record is a small room (fields, related records, files, history) and every
+file knows which client and deal it belongs to, which version it is and where its rows went.
+
+### The three views (widget types `board`, `timeline`, `gallery`)
+
+All settings live in the widget's `options`. They take part in linking ("Select by"), filters,
+sort, search, access rules and embeds like every other widget, and draw records with the same
+tile (`RecordTile.tsx`: title, optional cover, chosen fields with a value, file counter, row styles).
+
+- **Board** (`BoardWidget.tsx`, logic in `src/lib/board.ts`): stacks by a Choice, Reference or
+  Toggle column; optional lanes by a second column. Dragging a card to another stack changes that
+  cell and its position in one undoable step (so automations run: "moved to Won → email").
+  Each card also has a "Move to…" menu, so nothing needs dragging. Stack headers show a count and
+  a total of a number column; per stack a limit (header turns amber) and a condition a record must
+  meet to enter (`$Value > 0 and len($Files) > 0`). Stacks collapse (per browser), can be hidden,
+  empty ones can be hidden, including the "No value" stack. "Time in the stack" shows how long a
+  card has been there, from a DateTime column stamped by a trigger formula (one click adds it).
+  With a saved sort, cards keep that order and dragging only changes the stack.
+- **Timeline** (`TimelineWidget.tsx`, maths in `src/lib/timeline.ts`): a bar per record from a
+  start to an end date (a diamond without an end), zoom from days to years, groups, today line.
+  Drag a bar to move it, its ends to resize (times of day are kept; dates are in the document's
+  time zone). Dependencies are a Reference List column to the same table ("Waits for"): arrows
+  from what is waited for, red when the order is broken; drag the dot at a bar's end onto another
+  bar to add one (loops are refused). When a bar moves later, the app offers to move the bars
+  waiting for it, through chains and only as far as needed, in the same undoable step.
+  Finish-to-start only; no baseline or critical path yet.
+- **Gallery** (`GalleryWidget.tsx`): tiles with a cover from an Attachments column (small, medium,
+  large; crop or fit), sections by a column, drop files on a tile to attach them, click the cover
+  for the file viewer. "One tile per file" turns it into a file or asset library.
+
+### Files
+
+- **Viewer** (`FileViewer.tsx`, opened from covers, the Files page, a record's Files tab or the
+  open button in an Attachments cell): images, PDFs, text, and CSV / TSV / Excel as a grid (first
+  500 rows) with a line per column: the type it looks like, how many different values, how many empty.
+- **Versions**: "New version" uploads a file as the next version of the current one
+  (`doc_attachments.version`, `replaces`, `note`); the cell then holds the new id (an ordinary,
+  undoable cell change) and earlier versions stay downloadable.
+- **Kept at upload**: a SHA-256 of the content, rows × columns and headers for spreadsheets
+  (`table_info`, files up to 15 MB), and a 480 px WebP preview stored next to the file
+  (`thumb_path`), so boards and galleries don't load full images.
+- **Import into a table…** on any attached spreadsheet opens the import dialog with that file.
+  Every import (from a file, a URL or an upload) is recorded in `doc_imports`: file and version,
+  table, column mapping, key columns, records added and updated. When a new version of an
+  imported file is opened, "Update <table> from this version…" repeats the mapping and shows
+  what would change before anything is saved.
+- **Files page** (sidebar → Files, `FilesView.tsx`): every file in the document with the record
+  and column holding it, what that record belongs to (its client, its deal…), version, size and
+  whether it was imported; search and filters.
+
+### The record page
+
+The record popup (`RecordCard.tsx`; also `/doc/<id>?record=<table>:<row>`) has tabs: **Details**;
+**Related** (what it belongs to, and the records in other tables that point at it, with "Add");
+**Files** (its own, with upload and drop, and those of its related records); **Comments**; and
+**Activity** (changes to this record from the action log, for editors and owners, as far as the
+log is visible to them).
+
+### Client hub template
+
+Home → New from template → **Client hub**: Clients, Deals, Tasks, Assets and Datasets, with a
+Pipeline page (deal board with totals, the selected deal's tasks and datasets), a Clients page,
+a Delivery plan (timeline with dependencies, task board with a lane per deal) and an Assets gallery.
+
+### Not built yet
+
+Download-all as a zip; undoing a whole import in one step (Ctrl+Z undoes it a thousand records
+at a time); adding, renaming and reordering stacks from the board itself (edit the column's
+choices); creating bars by dragging on empty space; baseline, critical path and lag days.
+
+## Email
+
+Migration `20261119100000_mail.sql`; tests in `supabase/tests/mail.sql` and
+`src/lib/__tests__/mail.test.ts`; Edge Functions `deliver`, `notify`, `sendgrid-events`
+with shared code in `supabase/functions/_shared/`. All email goes through SendGrid.
+
+### Setting it up (once)
+
+1. **SendGrid**: authenticate the sending domain (Settings → Sender Authentication; add the
+   DNS records it shows, plus a DMARC record) and create an API key restricted to *Mail Send*.
+2. **Secrets** on the Supabase project (they are project-wide, hence the prefix):
+
+   ```bash
+   npx supabase secrets set --project-ref bcvcfqyymwypwclsdeog \
+     LMDU_SENDGRID_API_KEY=SG.xxxxx \
+     LMDU_MAIL_FROM="LM Data Universe <notifications@mail.example.com>" \
+     LMDU_APP_URL=https://data.example.com
+   ```
+
+   The older names (`SENDGRID_API_KEY`, `NOTIFY_FROM`, `APP_URL`) are still read.
+   `LMDU_MAIL_DRY_RUN=1` logs emails instead of sending them.
+3. **Delivery reports**: SendGrid → Settings → Mail Settings → Event Webhook → URL
+   `https://bcvcfqyymwypwclsdeog.supabase.co/functions/v1/sendgrid-events`, events
+   *Delivered, Deferred, Bounced, Dropped, Spam Reports*, turn on *Signed Event Webhook* and
+   store its verification key: `npx supabase secrets set LMDU_SENDGRID_WEBHOOK_KEY=…`.
+4. **Sign-up and password-reset mail** (Supabase Auth): Dashboard → Authentication → SMTP:
+   host `smtp.sendgrid.net`, port `587`, user `apikey`, password = the API key, sender = the
+   same address; then raise the email limit under Authentication → Rate Limits.
+5. Check: Admin panel → **Email** → "Send me a test email".
+
+### What is sent
+
+- **Invites, "shared with you", @mentions and test emails**: `notification_queue` → `notify`.
+- **Automation emails** (document → Integrations): `job_queue` → `deliver`. Written as
+  Markdown (`**bold**`, `*italic*`, `[text](https://…)`, lists, `#` headings) and sent as plain
+  text + HTML. Each email action has To, Subject, Message and optionally a sender name,
+  Reply-To, CC and BCC. The From address is always the app's (`LMDU_MAIL_FROM`): SendGrid
+  refuses senders that aren't verified.
+
+### Tags
+
+`{{ColId}}` or `{{Column label}}`, `{{Reference.Column}}` through a Reference column, and
+`{{id}}`, `{{record_link}}` (opens the record: `/doc/<id>?record=<table>:<row>`), `{{link}}`,
+`{{doc}}`, `{{table}}`, `{{automation}}`, `{{changed_by}}`. A fallback for empty values:
+`{{Name|there}}`.
+
+- The editor's picker inserts a tag at the cursor in the field last used; **Preview** fills the
+  email from the newest record (`preview_automation`), exactly as it will be sent.
+- Unknown tags are refused when saving, by the editor and by `save_automation`.
+- Values are formatted as the grid shows them (dates in the column's format, date-times in
+  the document's time zone, currency, percentages), filled by `_fill_template` in the database.
+- Values can't add formatting, links or HTML of their own: Markdown characters in them are
+  escaped by the database and everything is HTML-escaped by the renderer
+  (`_shared/markdown.ts`).
+- Renaming a column rewrites `{{Old}}` (and `{{Ref.Old}}`) in the document's automations
+  (`tg_automation_tags`).
+
+### Delivery, bounces and limits
+
+- The delivery log shows where each email is: sent (accepted by SendGrid), reached the inbox,
+  delayed, bounced, blocked or marked as spam (`job_queue.delivery`, from `mail_events`).
+- A hard bounce or spam report puts the address in `mail_suppressions`; automations leave it
+  out from then on and say so in the log. Administrators clear entries under Admin → Email.
+- Errors that can't get better (refused request, wrong key, unverified sender) fail at once;
+  rate limits and server errors are retried with growing waits.
+- Limits: emails per document per day by plan (`plans.max_emails_per_day`: Free 100, Pro
+  2,000, Unlimited none), the same email for the same record at most once a minute, 10
+  recipients per email, and the older guards (2,000 automation deliveries a day per document,
+  100 records per change). "Send test" is exempt.
+- `mail_config` (one row, written by the functions) says whether email works; the Integrations
+  page shows a banner when it doesn't, and Admin → Email shows the sender, the week's numbers
+  and the last error.
+- Every message carries the category `lmdu` and the custom argument `lmdu_env=lmdu`; events
+  without it are ignored, so the other app's mail on the same SendGrid account is left alone.
+  Delivery events are kept 90 days (`lmdu-mail-cleanup`).
+
+## Shared Supabase project
+
+This app and a separate email app run on the same Supabase project
+(`bcvcfqyymwypwclsdeog`). They must not touch each other.
+
+| | LM Data Universe (this app) | Email app |
+| --- | --- | --- |
+| Schema | `public` | `email_app` |
+| Migrations | `supabase/migrations/` here | named `email_app_*`, kept in that app |
+| Cron jobs | `lmdu-*` | its own |
+| Edge Functions | `doc-worker`, `deliver`, `notify` | its own |
+| Storage | bucket `attachments` | its own |
+| Vault secrets | `doc_worker_url`, `doc_worker_secret` | its own |
+| Edge Function secrets | prefixed `LMDU_` (older unprefixed names still read) | its own |
+
+Rules:
+
+- Never change schema `email_app` or anything named `email_app_*` from this app.
+- Apply migrations **one file at a time** (the dashboard SQL editor or the Supabase
+  MCP `apply_migration`). Never run `supabase db push`, `supabase db reset` or
+  `supabase migration repair` against this project: the migration history holds both
+  apps' migrations and this folder only has ours.
+- Edge Function secrets are project-wide, so new ones get the `LMDU_` prefix.
+- `pg_cron`, `pg_net`, `pgcrypto` and Vault are shared: don't drop or downgrade them.
+- Deploying one of our Edge Functions (`supabase functions deploy <name>`) only
+  replaces that function.
+
+The same rules are stored in the database as the comment on schema `public`
+(migration `20261118210000_shared_project_notes.sql`). The plan for email through
+SendGrid is in `docs/sendgrid-plan.md`.
 
 ## How changes are saved
 
