@@ -261,7 +261,7 @@ export function DocScreen({ docId }: { docId: string }) {
       {/* top bar */}
       {!embed && (
       <header className="flex h-12 shrink-0 items-center gap-3 border-b border-gray-200 bg-white px-3">
-        <Link href="/" title="All documents" className="rounded-md p-1 hover:bg-gray-100">
+        <Link href={doc ? `/w/${doc.workspace_id}` : "/"} title="Back to the workspace" className="rounded-md p-1 hover:bg-gray-100">
           <Logo compact />
         </Link>
         {editingName && canEdit ? (

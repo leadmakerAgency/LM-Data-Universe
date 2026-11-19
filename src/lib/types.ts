@@ -56,6 +56,12 @@ export interface DocumentRec {
   forked_from?: string | null;
   /** Document settings: locale, default currency and time zone. */
   settings?: DocSettings;
+  /** "hub": the hidden document behind a workspace's sidebar sections. */
+  kind?: "document" | "hub";
+  /** The hub's sections (hubs only). */
+  hub_config?: Record<string, unknown>;
+  /** The client (a row of the workspace hub's Clients table) this document belongs to. */
+  hub_client?: number | null;
 }
 
 export interface DocSettings {
@@ -185,6 +191,13 @@ export interface WidgetOptions {
   formDescription?: string;
   submitLabel?: string;
   successMessage?: string;
+  /**
+   * Only records that point at this record through this column (a Reference or
+   * Reference List): the client filter of hub sections. Not saved with a view.
+   */
+  onlyRef?: { col: string; id: number } | null;
+  /** A saved view's name (hub sections). */
+  viewName?: string;
   /** board / gallery / timeline: how a record's tile looks */
   tileTitle?: string | null;
   /** Columns shown on the tile, in order (default: the first few). */

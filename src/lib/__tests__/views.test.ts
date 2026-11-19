@@ -6,7 +6,7 @@ import { ago, groupCards, stackKey, stackValue, stacksFor } from "../board";
 import { dayDate, dayNumber, dependencyBroken, pushDependents, timelineRange, timelineTicks, wouldLoop, type Bar } from "../timeline";
 import { viewDefaults } from "../widgetDefaults";
 import { fileKind } from "../attachments";
-import { TEMPLATES } from "../templates";
+import { HUB_SPEC, customSectionColumns, sectionKey } from "../hub";
 
 const choice = { type: "Choice" as const, options: { choices: ["Lead", "Won", "Lost"] } };
 const ref = { type: "Ref" as const, options: {} };
@@ -138,8 +138,8 @@ describe("new views", () => {
   });
 });
 
-describe("Client hub template", () => {
-  const hub = TEMPLATES.find((t) => t.id === "client-hub")!.spec;
+describe("workspace hub", () => {
+  const hub = HUB_SPEC;
   const table = (name: string) => hub.tables.find((t) => t.name === name)!;
 
   it("names only columns and tables that exist", () => {
@@ -177,5 +177,14 @@ describe("Client hub template", () => {
         }
       });
     }
+  });
+
+  it("makes unique section keys and sensible columns", () => {
+    expect(sectionKey("Campaigns", [])).toBe("campaigns");
+    expect(sectionKey("Clients", [])).toBe("clients-2");
+    expect(sectionKey("Social posts!", ["social-posts"])).toBe("social-posts-2");
+    expect(sectionKey("???", [])).toBe("section");
+    expect(customSectionColumns("timeline").map((c) => c.label)).toEqual(["Name", "Status", "Owner", "Start", "End", "Files", "Notes"]);
+    expect(customSectionColumns("board").map((c) => c.label)).toContain("Date");
   });
 });

@@ -253,6 +253,30 @@ the record(s) the selected one points at through its own Reference column ("Orde
 Customer", stored as `options.linkSourceCol`): a Reference moves the cursor there, a Reference
 List shows just those records.
 
+## Workspace sections (the hub)
+
+Migration `20261121100000_workspace_hub.sql`; tests in `supabase/tests/workspace_hub.sql`; plan in `docs/workspace-hub-plan.md`.
+
+Every workspace has a sidebar with **Overview, Clients, Pipeline, Planning, Files & assets** and any sections added with
+"+ Add a section" (`/w/<workspace>/<section>`, `src/components/hub/`). They are pages of a hidden document per workspace
+(`documents.kind = 'hub'`, made and filled the first time a section is opened by `ensure_hub` and `setUpHub` in
+`src/lib/hub.ts`), so undo, history, realtime, access rules, automations, imports and the API all work on them. Hubs can't
+be trashed, moved or deleted on their own, aren't listed as documents and don't count against the plan's document limit.
+
+- **Views:** each section's views are tabs: shared ones are widgets on the section's page (editors change them), personal
+  ones are rows of `user_views` (only their owner sees them, marked with a lock). The toolbar switches a view between Board,
+  Table, Timeline, Gallery and Calendar; "View options" opens the usual widget panel.
+- **Clients:** every section table has a Reference column to Clients. The client filter (`?client=<id>`, kept while moving
+  between sections), the client list beside a section (with counts), and "Group by client" (lanes, groups, gallery
+  sections) narrow or split any view; "+ Deal" etc. fill the selected client in. Opening a client anywhere goes to its page
+  (`/w/<ws>/clients/<id>`): key facts, details, and a tab per section narrowed to the client, plus Contacts, Documents
+  (documents linked with `documents.hub_client`, a new document for the client, link or unlink one) and Activity.
+- **Overview:** open pipeline value, won this month, tasks due this week and overdue, files received this week, deals by stage,
+  upcoming tasks; for one client when one is selected.
+- `/` opens the last workspace's Overview; `/?ws=<id>` is its documents list; the Client hub template was removed.
+- Not built yet: bulk actions on several cards, keyboard shortcuts for sections, renaming / reordering / hiding sections
+  in the app, moving data from documents made with the old Client hub template, a mobile layout.
+
 ## Board, Timeline, Gallery and files
 
 Migration `20261120100000_views_and_files.sql`; tests in `supabase/tests/views.sql` and

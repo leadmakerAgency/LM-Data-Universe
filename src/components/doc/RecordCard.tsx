@@ -53,7 +53,7 @@ function FileRow({ id, siblings, sub }: { id: string; siblings: string[]; sub?: 
   );
 }
 
-function Activity({ tableRef, rowId }: { tableRef: string; rowId: number }) {
+export function Activity({ tableRef, rowId }: { tableRef: string; rowId: number }) {
   const docId = useDoc((s) => s.docId);
   const [items, setItems] = useState<{ a: LoggedAction; text: string }[] | null>(null);
   const [names, setNames] = useState<Map<string, string>>(new Map());

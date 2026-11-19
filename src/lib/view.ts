@@ -190,6 +190,17 @@ export function widgetRows(widget: DocWidget, opts: { search?: string; ignoreFil
     }
   }
 
+  // Client filter of hub sections: only records that point at one record.
+  const only = widget.options.onlyRef;
+  const onlyCol = only ? state.columns.get(only.col) : undefined;
+  if (only && onlyCol) {
+    ids = ids.filter((id) => {
+      const v = engine.safeValue(onlyCol, id);
+      return v instanceof RecordRef ? v.rowId === only.id : v instanceof RecordSet ? v.ids.includes(only.id) : false;
+    });
+    if (!onlyCol.is_formula && link.newRowDefaults[onlyCol.id] === undefined) link.newRowDefaults[onlyCol.id] = onlyCol.type === "RefList" ? [only.id] : only.id;
+  }
+
   const filters = widget.options.filters ?? {};
   for (const [colId, f] of Object.entries(filters)) {
     if (colId === opts.ignoreFilterFor) continue;

@@ -17,6 +17,11 @@ import {
   Undo2,
   Upload,
   Users,
+  LayoutDashboard,
+  Kanban,
+  SquareChartGantt,
+  Images,
+  FileText,
   Copy,
   KeyRound,
   Settings2,
@@ -99,12 +104,40 @@ export function HomeScreen() {
     const list = (w.data as Workspace[]).sort((a, b) => Number(b.is_personal) - Number(a.is_personal));
     setWorkspaces(list);
     setWsRoles(Object.fromEntries((wm.data as { workspace_id: string; role: Role }[]).map((r) => [r.workspace_id, r.role])));
-    setDocs(d.data as DocumentRec[]);
+    // Workspace hubs are shown as the workspace's sections, not as documents.
+    setDocs((d.data as DocumentRec[]).filter((x) => x.kind !== "hub"));
     setDocRoles(Object.fromEntries((dm.data as { doc_id: string; role: Role }[]).map((r) => [r.doc_id, r.role])));
     setTeams(t.data as Team[]);
     setTeamRoles(Object.fromEntries((tm.data as { team_id: string; role: Role }[]).map((r) => [r.team_id, r.role])));
-    setView((v) => v ?? (list[0] ? { kind: "workspace", id: list[0].id } : { kind: "shared" }));
-  }, [userId]);
+    // "/" opens the last workspace's sections; "/?ws=<id>" its documents; "/?view=shared|templates|trash".
+    const qs = new URLSearchParams(window.location.search);
+    const wsParam = qs.get("ws");
+    const viewParam = qs.get("view");
+    if (!wsParam && !viewParam) {
+      let last: string | null = null;
+      try {
+        last = window.localStorage.getItem("lmdu-last-ws");
+      } catch {
+        /* nothing remembered */
+      }
+      const target = list.find((x) => x.id === last) ?? list[0];
+      if (target) {
+        router.replace(`/w/${target.id}`);
+        return;
+      }
+    }
+    setView(
+      (v) =>
+        v ??
+        (viewParam === "shared" || viewParam === "templates" || viewParam === "trash"
+          ? { kind: viewParam }
+          : wsParam && list.some((x) => x.id === wsParam)
+            ? { kind: "workspace", id: wsParam }
+            : list[0]
+              ? { kind: "workspace", id: list[0].id }
+              : { kind: "shared" }),
+    );
+  }, [userId, router]);
 
   useEffect(() => {
     // Initial data fetch; state is set after the requests resolve.
@@ -671,8 +704,17 @@ export function HomeScreen() {
   );
 }
 
+/** A workspace in the sidebar; the open one lists its sections (they open /w/<id>/…). */
 function WorkspaceButton({ ws, active, count, onClick }: { ws: Workspace; active: boolean; count: number; onClick: () => void }) {
+  const sections: [string, string, React.ReactNode][] = [
+    ["", "Overview", <LayoutDashboard key="o" size={14} />],
+    ["/clients", "Clients", <Users key="c" size={14} />],
+    ["/pipeline", "Pipeline", <Kanban key="p" size={14} />],
+    ["/planning", "Planning", <SquareChartGantt key="l" size={14} />],
+    ["/files", "Files & assets", <Images key="f" size={14} />],
+  ];
   return (
+    <>
     <button
       onClick={onClick}
       className={clsx(
@@ -684,6 +726,19 @@ function WorkspaceButton({ ws, active, count, onClick }: { ws: Workspace; active
       <span className="flex-1 truncate">{ws.name}</span>
       <span className="text-xs text-gray-400">{count}</span>
     </button>
+    {active && (
+      <div className="mb-1 ml-4 border-l border-gray-200 pl-2">
+        {sections.map(([path, label, icon]) => (
+          <Link key={label} href={`/w/${ws.id}${path}`} className="flex items-center gap-2 rounded-md px-2 py-1 text-[13px] text-gray-600 hover:bg-gray-100 hover:text-gray-900">
+            <span className="opacity-70">{icon}</span> {label}
+          </Link>
+        ))}
+        <span className="flex items-center gap-2 rounded-md bg-gray-100 px-2 py-1 text-[13px] font-medium text-gray-800">
+          <FileText size={14} className="opacity-70" /> Documents
+        </span>
+      </div>
+    )}
+    </>
   );
 }
 
