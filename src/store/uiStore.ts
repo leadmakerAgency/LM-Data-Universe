@@ -1,5 +1,23 @@
 import { create } from "zustand";
 import type { ColumnFilter, SortSpec } from "@/lib/types";
+import type { AttachmentMeta } from "@/lib/attachments";
+import type { ImportMode, Sheet } from "@/lib/importer";
+
+/** A file opened in the viewer; `siblings` are the files next / previous steps through. */
+export interface FileView {
+  id: string;
+  siblings?: string[];
+  /** The cell holding the file, when it was opened from one (needed to add a new version). */
+  cell?: { tableRef: string; rowId: number; colId: string };
+}
+
+/** An import started from an attached file (optionally repeating an earlier import's mapping). */
+export interface ImportSource {
+  sheets: Sheet[];
+  label: string;
+  attachment?: AttachmentMeta;
+  preset?: { tableRef: string; mapping: { header: string; col: string }[]; keys: string[]; mode: ImportMode };
+}
 
 export type PanelState =
   | { tab: "column"; colId: string; focusFormula?: boolean }
@@ -34,6 +52,8 @@ interface UiState {
   findTarget: FindTarget | null;
   /** Record shown in the record card popup. */
   recordCard: { tableRef: string; rowId: number } | null;
+  fileView: FileView | null;
+  importSource: ImportSource | null;
   /** Shown inside another site (embed code): no editing chrome. */
   embed: boolean;
   setActivePage(id: string | null): void;
@@ -44,6 +64,8 @@ interface UiState {
   setDraft(widgetId: string, d: WidgetDraft | null): void;
   setFindTarget(t: Omit<FindTarget, "seq"> | null): void;
   openRecordCard(c: { tableRef: string; rowId: number } | null): void;
+  openFile(f: FileView | null): void;
+  importFrom(s: ImportSource | null): void;
 }
 
 let seq = 0;
@@ -57,6 +79,8 @@ export const useUi = create<UiState>((set) => ({
   drafts: {},
   findTarget: null,
   recordCard: null,
+  fileView: null,
+  importSource: null,
   embed: false,
   setActivePage: (id) => set({ activePage: id, activeWidget: null, search: "", findTarget: null }),
   setActiveWidget: (id) => set({ activeWidget: id }),
@@ -72,6 +96,8 @@ export const useUi = create<UiState>((set) => ({
     }),
   setFindTarget: (t) => set({ findTarget: t ? { ...t, seq: ++seq } : null }),
   openRecordCard: (recordCard) => set({ recordCard }),
+  openFile: (fileView) => set({ fileView }),
+  importFrom: (importSource) => set({ importSource }),
 }));
 
 /** A widget with its unsaved sort / filter applied. */

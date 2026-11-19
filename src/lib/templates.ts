@@ -160,7 +160,134 @@ const projects: DocSpec = {
   ],
 };
 
+const HUB_STAGES = ["Lead", "Proposal", "Negotiation", "Won", "Lost"];
+const HUB_STATUS = ["To do", "In progress", "Review", "Done"];
+const eur = { numMode: "currency" as const, currency: "EUR", decimals: 0 };
+
+/** Clients, their deals, the work and every file: the board, timeline, gallery and record pages together. */
+const clientHub: DocSpec = {
+  name: "Client hub",
+  tables: [
+    {
+      name: "Clients",
+      columns: [
+        { label: "Client", type: "Text" },
+        { label: "Industry", type: "Choice", options: { choices: ["Retail", "Software", "Health", "Finance", "Other"] } },
+        { label: "Account owner", type: "Text" },
+        { label: "Logo", type: "Attachments" },
+        { label: "Open value", type: "Numeric", formula: 'SUM(r.Value for r in Deals.lookupRecords(Client=$id) if r.Stage not in ["Won", "Lost"])', options: eur },
+        { label: "Notes", type: "Text" },
+      ],
+      rows: [
+        ["Northwind Traders", "Retail", "Ana"],
+        ["Globex Software", "Software", "Ben"],
+        ["Helix Health", "Health", "Ana"],
+      ],
+    },
+    {
+      name: "Deals",
+      columns: [
+        { label: "Deal", type: "Text" },
+        { label: "Client", type: "Ref", refTable: "Clients", visibleCol: "Client" },
+        { label: "Stage", type: "Choice", options: { choices: HUB_STAGES } },
+        { label: "Value", type: "Numeric", options: eur },
+        { label: "Close date", type: "Date" },
+        { label: "Owner", type: "Text" },
+        { label: "Files", type: "Attachments" },
+      ],
+      rows: [
+        ["Spring campaign", { $ref: 0 }, "Negotiation", 18000, "2026-12-15", "Ana"],
+        ["Loyalty app data audit", { $ref: 0 }, "Proposal", 9500, "2027-01-20", "Ben"],
+        ["Website relaunch", { $ref: 1 }, "Won", 42000, "2026-11-10", "Ben"],
+        ["SEO retainer", { $ref: 1 }, "Lead", 12000, "2027-02-01", "Ana"],
+        ["Patient survey analysis", { $ref: 2 }, "Proposal", 15500, "2026-12-20", "Ana"],
+      ],
+    },
+    {
+      name: "Tasks",
+      columns: [
+        { label: "Task", type: "Text" },
+        { label: "Deal", type: "Ref", refTable: "Deals", visibleCol: "Deal" },
+        { label: "Assignee", type: "Text" },
+        { label: "Status", type: "Choice", options: { choices: HUB_STATUS } },
+        { label: "Start", type: "Date" },
+        { label: "Due", type: "Date" },
+        { label: "Waits for", type: "RefList", refTable: "Tasks", visibleCol: "Task" },
+        { label: "Progress", type: "Numeric", options: { numMode: "percent", decimals: 0 } },
+        { label: "Files", type: "Attachments" },
+      ],
+      rows: [
+        ["Kick-off and brief", { $ref: 2 }, "Ben", "Done", "2026-11-12", "2026-11-14", null, 1],
+        ["Content inventory (CSV)", { $ref: 2 }, "Dev", "In progress", "2026-11-16", "2026-11-24", { $refs: [0] }, 0.6],
+        ["Design system", { $ref: 2 }, "Ana", "In progress", "2026-11-18", "2026-12-04", { $refs: [0] }, 0.3],
+        ["Build pages", { $ref: 2 }, "Dev", "To do", "2026-12-07", "2026-12-23", { $refs: [1, 2] }, 0],
+        ["Launch", { $ref: 2 }, "Ben", "To do", "2027-01-06", null, { $refs: [3] }, 0],
+        ["Audience research", { $ref: 0 }, "Ana", "To do", "2026-11-25", "2026-12-05", null, 0],
+      ],
+    },
+    {
+      name: "Assets",
+      columns: [
+        { label: "Asset", type: "Text" },
+        { label: "Client", type: "Ref", refTable: "Clients", visibleCol: "Client" },
+        { label: "Campaign", type: "Text" },
+        { label: "Kind", type: "Choice", options: { choices: ["Image", "Video", "Copy", "Report"] } },
+        { label: "File", type: "Attachments" },
+      ],
+      rows: [
+        ["Hero banner", { $ref: 1 }, "Website relaunch", "Image"],
+        ["Spring teaser", { $ref: 0 }, "Spring campaign", "Image"],
+      ],
+    },
+    {
+      name: "Datasets",
+      columns: [
+        { label: "Dataset", type: "Text" },
+        { label: "Client", type: "Ref", refTable: "Clients", visibleCol: "Client" },
+        { label: "Deal", type: "Ref", refTable: "Deals", visibleCol: "Deal" },
+        { label: "File", type: "Attachments" },
+        { label: "Received", type: "Date" },
+        { label: "Notes", type: "Text" },
+      ],
+      rows: [
+        ["Loyalty members export", { $ref: 0 }, { $ref: 1 }, null, "2026-11-10", "Upload the CSV here, open it and choose Import into a table"],
+        ["Survey responses", { $ref: 2 }, { $ref: 4 }, null, "2026-11-14"],
+      ],
+    },
+  ],
+  pages: [
+    {
+      name: "Pipeline",
+      widgets: [
+        { type: "board", table: "Deals", title: "Deals by stage", width: 12, height: 520, options: { labels: { boardCol: "Stage", boardSum: "Value", tileTitle: "Deal", tileFields: ["Client", "Value", "Close date"], tileCover: "Files" } } },
+        { type: "table", table: "Tasks", title: "Tasks of the selected deal", width: 7, height: 300, linkTo: 0, linkCol: "Deal" },
+        { type: "gallery", table: "Datasets", title: "Datasets of the selected deal", width: 5, height: 300, linkTo: 0, linkCol: "Deal", options: { galSize: "small", labels: { tileTitle: "Dataset", tileCover: "File", tileFields: ["Received"] } } },
+      ],
+    },
+    {
+      name: "Clients",
+      widgets: [
+        { type: "gallery", table: "Clients", title: "Clients", width: 5, height: 560, options: { galSize: "small", tileCoverFit: "fit", labels: { tileTitle: "Client", tileCover: "Logo", tileFields: ["Industry", "Open value"] } } },
+        { type: "board", table: "Deals", title: "Their deals", width: 7, height: 280, linkTo: 0, linkCol: "Client", options: { labels: { boardCol: "Stage", boardSum: "Value", tileTitle: "Deal", tileFields: ["Value"] } } },
+        { type: "gallery", table: "Datasets", title: "Their datasets and files", width: 7, height: 264, linkTo: 0, linkCol: "Client", options: { galSize: "small", galMode: "records", labels: { tileTitle: "Dataset", tileCover: "File", tileFields: ["Deal", "Received"] } } },
+      ],
+    },
+    {
+      name: "Delivery plan",
+      widgets: [
+        { type: "timeline", table: "Tasks", title: "Plan", width: 12, height: 420, options: { tlZoom: "week", labels: { tlStart: "Start", tlEnd: "Due", tlGroup: "Deal", tlDeps: "Waits for", tlProgress: "Progress", tileTitle: "Task", tileColor: "Status" } } },
+        { type: "board", table: "Tasks", title: "Work by status", width: 12, height: 420, options: { labels: { boardCol: "Status", boardLane: "Deal", tileTitle: "Task", tileFields: ["Assignee", "Due"] } } },
+      ],
+    },
+    {
+      name: "Assets",
+      widgets: [{ type: "gallery", table: "Assets", title: "Assets", width: 12, height: 560, options: { galSize: "medium", labels: { tileTitle: "Asset", tileCover: "File", galGroup: "Campaign", tileFields: ["Client", "Kind"] } } }],
+    },
+  ],
+};
+
 export const TEMPLATES: Template[] = [
+  { id: "client-hub", name: "Client hub", description: "Clients, a deal board, a delivery timeline, asset galleries, and every file and dataset linked to its client and deal.", spec: clientHub },
   { id: "crm", name: "Lightweight CRM", description: "Companies, contacts and a deal pipeline with linked views and charts.", spec: crm },
   { id: "projects", name: "Project Tracker", description: "Projects with tasks, progress formulas and a status dashboard.", spec: projects },
 ];

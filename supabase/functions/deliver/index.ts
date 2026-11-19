@@ -11,16 +11,36 @@
 //   X-LMDU-Signature: sha256=<hex HMAC-SHA256 of "<timestamp>.<body>" with the webhook's secret>
 //   X-LMDU-Delivery:  the job id (the same on retries)
 //
-// Secrets (shared with `notify`): SENDGRID_API_KEY, NOTIFY_FROM, APP_URL.
+// Emails are written as Markdown and sent as text + HTML; the secrets are
+// described in ../_shared/mail.ts. Errors that can't get better (a refused
+// request, a wrong key, an unverified sender) are not retried.
 import { createClient } from "npm:@supabase/supabase-js@2.49.4";
+import { mailConfig, reportMail, sendMail, type MailConfig, type SendResult } from "../_shared/mail.ts";
+import { escapeHtml, plainText, renderHtml } from "../_shared/markdown.ts";
 
 const db = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
   auth: { persistSession: false, autoRefreshToken: false },
 });
 
-type Job =
-  | { id: number; kind: "webhook"; url: string; secret: string; body: unknown }
-  | { id: number; kind: "email"; to: string[]; subject: string; text: string; doc: string; doc_name: string };
+interface EmailJob {
+  id: number;
+  kind: "email";
+  to: string[];
+  cc?: string[];
+  bcc?: string[];
+  reply_to?: string | null;
+  from_name?: string | null;
+  subject: string;
+  /** Markdown; values from the record are already escaped. */
+  text: string;
+  doc: string;
+  doc_name: string;
+  row?: number | null;
+  table_ref?: string | null;
+  automation?: string | null;
+  test?: boolean;
+}
+type Job = { id: number; kind: "webhook"; url: string; secret: string; body: unknown } | EmailJob;
 
 const RUN_FOR_MS = 50_000;
 const PARALLEL = 5;
@@ -45,7 +65,7 @@ function safeUrl(raw: string): boolean {
   }
 }
 
-async function sendWebhook(job: Extract<Job, { kind: "webhook" }>): Promise<{ error: string | null; status: number | null }> {
+async function sendWebhook(job: Extract<Job, { kind: "webhook" }>): Promise<{ error: string | null; status: number | null; retry?: boolean }> {
   if (!safeUrl(job.url)) return { error: "Address not allowed", status: null };
   const body = JSON.stringify(job.body);
   const ts = Math.floor(Date.now() / 1000).toString();
@@ -76,41 +96,44 @@ async function sendWebhook(job: Extract<Job, { kind: "webhook" }>): Promise<{ er
   }
 }
 
-function parseFrom(from: string): { email: string; name?: string } {
-  const m = /^(.*)<([^>]+)>\s*$/.exec(from);
-  return m ? { name: m[1].trim().replace(/^"|"$/g, "") || undefined, email: m[2].trim() } : { email: from.trim() };
+function emailBody(job: EmailJob, cfg: MailConfig): { subject: string; text: string; html: string } {
+  const link = cfg.appUrl ? `${cfg.appUrl}/doc/${job.doc}` : "";
+  const recordLink = link && job.table_ref && job.row ? `${link}?record=${job.table_ref}:${job.row}` : link;
+  const fill = (s: string) => s.replace(/\{\{\s*record_link\s*\}\}/gi, recordLink).replace(/\{\{\s*link\s*\}\}/gi, link);
+  const body = fill(job.text);
+  const note = `Sent by the automation “${job.automation || "Automation"}” in “${job.doc_name}”${job.test ? " (test)" : ""}`;
+  const text = `${plainText(body)}\n\n—\n${note}${link ? `: ${link}` : ""}`;
+  const html = `<div style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;font-size:15px;line-height:1.55;color:#1f2330;max-width:600px">
+${renderHtml(body)}
+<p style="margin-top:28px;padding-top:12px;border-top:1px solid #e5e7eb;color:#6b7280;font-size:12px">${escapeHtml(note)}${link ? ` · <a href="${escapeHtml(link)}" style="color:#5a43d9">Open the document</a>` : ""}</p>
+</div>`;
+  return { subject: fill(job.subject), text, html };
 }
 
-async function sendEmail(job: Extract<Job, { kind: "email" }>): Promise<{ error: string | null; status: number | null }> {
-  const key = Deno.env.get("SENDGRID_API_KEY");
-  const from = Deno.env.get("NOTIFY_FROM");
-  const appUrl = (Deno.env.get("APP_URL") ?? "").replace(/\/$/, "");
-  if (!key || !from) return { error: "Email isn't set up: the SENDGRID_API_KEY and NOTIFY_FROM secrets are missing", status: null };
-  const link = appUrl ? `${appUrl}/doc/${job.doc}` : "";
-  const fill = (s: string) => s.replace(/\{\{\s*link\s*\}\}/gi, link);
-  const text = `${fill(job.text)}\n\n—\nSent by an automation in “${job.doc_name}”${link ? `: ${link}` : ""}`;
-  try {
-    const res = await fetch("https://api.sendgrid.com/v3/mail/send", {
-      method: "POST",
-      headers: { Authorization: `Bearer ${key}`, "Content-Type": "application/json" },
-      body: JSON.stringify({
-        personalizations: [{ to: job.to.map((email) => ({ email })) }],
-        from: parseFrom(from),
-        subject: fill(job.subject) || "(no subject)",
-        content: [{ type: "text/plain", value: text }],
-      }),
-    });
-    if (res.ok) return { error: null, status: res.status };
-    return { error: `SendGrid ${res.status}: ${(await res.text()).slice(0, 300)}`, status: res.status };
-  } catch (e) {
-    return { error: e instanceof Error ? e.message : String(e), status: null };
-  }
+async function sendEmail(job: EmailJob, cfg: MailConfig): Promise<SendResult> {
+  const m = emailBody(job, cfg);
+  return sendMail(cfg, {
+    to: job.to,
+    cc: job.cc,
+    bcc: job.bcc,
+    replyTo: job.reply_to,
+    fromName: job.from_name,
+    subject: m.subject,
+    text: m.text,
+    html: m.html,
+    category: "automation",
+    args: { lmdu_job: String(job.id), lmdu_doc: job.doc },
+  });
 }
 
 async function run(secret: string) {
   const started = Date.now();
   let sent = 0;
   let failed = 0;
+  const cfg = mailConfig();
+  // What the emails of this run say about the account: null = no email tried.
+  let mailOk: boolean | null = null;
+  let mailError: string | null = null;
   while (Date.now() - started < RUN_FOR_MS) {
     const { data, error } = await db.rpc("jobs_claim", { p_secret: secret, p_limit: 20 });
     if (error) {
@@ -122,15 +145,25 @@ async function run(secret: string) {
     for (let i = 0; i < jobs.length; i += PARALLEL) {
       await Promise.all(
         jobs.slice(i, i + PARALLEL).map(async (job) => {
-          const r = job.kind === "webhook" ? await sendWebhook(job) : await sendEmail(job);
+          let r: { error: string | null; status: number | null; retry?: boolean };
+          if (job.kind === "webhook") r = await sendWebhook(job);
+          else {
+            const m = await sendEmail(job, cfg);
+            r = m;
+            if (m.setup) {
+              mailOk = false;
+              mailError = m.error;
+            } else if (!m.error && mailOk === null) mailOk = true;
+          }
           if (r.error) failed++;
           else sent++;
-          const { error: doneErr } = await db.rpc("jobs_done", { p_secret: secret, p_id: job.id, p_error: r.error, p_status: r.status });
+          const { error: doneErr } = await db.rpc("jobs_done", { p_secret: secret, p_id: job.id, p_error: r.error, p_status: r.status, p_retry: r.retry ?? true });
           if (doneErr) console.error(JSON.stringify({ job: job.id, done: doneErr.message }));
         }),
       );
     }
   }
+  if (mailOk !== null) await reportMail(db, secret, cfg, mailOk, mailError);
   console.log(JSON.stringify({ sent, failed, ms: Date.now() - started }));
 }
 

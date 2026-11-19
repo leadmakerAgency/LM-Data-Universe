@@ -86,8 +86,8 @@ export function toNumber(v: unknown): number | null {
 /** Stable key used to compare values in lookups and grouping. */
 export function valueKey(v: unknown): string {
   if (v === null || v === undefined || v === "") return "∅";
-  if (v instanceof RecordRef) return `n:${v.rowId}`;
-  if (v instanceof RecordSet) return `l:${v.ids.join(",")}`;
+  if (v instanceof RecordRef) return v.rowId ? `n:${v.rowId}` : "∅";
+  if (v instanceof RecordSet) return v.ids.length ? `l:${v.ids.join(",")}` : "∅";
   if (typeof v === "number") return `n:${v}`;
   if (typeof v === "boolean") return `b:${v}`;
   if (isDate(v)) return `d:${v.toISOString()}`;

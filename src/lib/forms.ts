@@ -1,7 +1,7 @@
 // Forms: the layout stored on a form widget, and the definition a form page
 // renders. The public page gets its definition from `get_public_form`; the
 // builder makes the same shape from local data so the preview matches.
-import type { CellValue, ColumnOptions, ColumnType, DocColumn, DocWidget, FormFieldDisplay, FormItem } from "./types";
+import type { CellValue, ColumnOptions, ColumnType, DocWidget, FormFieldDisplay, FormItem } from "./types";
 
 export const MAX_FORM_UPLOAD_BYTES = 10 * 1024 * 1024;
 

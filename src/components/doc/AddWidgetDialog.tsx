@@ -12,7 +12,15 @@ export interface LinkOption {
   key: string;
   sourceId: string;
   linkCol: string | null;
+  /** A reference column of the source widget's table pointing at this table (see WidgetOptions.linkSourceCol). */
+  sourceCol?: string | null;
   label: string;
+}
+
+/** The key of the link a widget has now, matching `LinkOption.key`. */
+export function currentLinkKey(w: Pick<DocWidget, "link_source" | "link_col" | "options">): string {
+  if (!w.link_source) return "";
+  return `${w.link_source}|${w.link_col ?? ""}${!w.link_col && w.options.linkSourceCol ? `|${w.options.linkSourceCol}` : ""}`;
 }
 
 /** Ways a widget on `tableRef` can follow the selection of the given widgets. */
@@ -21,7 +29,7 @@ export function linkOptions(tableRef: string | null, candidates: DocWidget[]): L
   const out: LinkOption[] = [];
   const cols = tableColumns(tableRef);
   for (const s of candidates) {
-    if (!s.table_ref || !(["table", "card", "card_list", "summary", "calendar", "custom"].includes(s.type) || (s.type === "chart" && (s.options.chartType === "scatter" || s.options.aggregate === "none")))) continue;
+    if (!s.table_ref || !(["table", "card", "card_list", "summary", "calendar", "custom", "board", "timeline", "gallery"].includes(s.type) || (s.type === "chart" && (s.options.chartType === "scatter" || s.options.aggregate === "none")))) continue;
     const name = widgetTitle(s);
     if (s.table_ref === tableRef) {
       out.push({
@@ -35,6 +43,12 @@ export function linkOptions(tableRef: string | null, candidates: DocWidget[]): L
     for (const c of cols) {
       if ((c.type === "Ref" || c.type === "RefList") && c.options.refTable === s.table_ref && !c.is_formula) {
         out.push({ key: `${s.id}|${c.id}`, sourceId: s.id, linkCol: c.id, label: `${name} → by ${c.label || c.col_id}` });
+      }
+    }
+    // The other way round: the source's records point at this table ("Orders → its Customer").
+    for (const c of tableColumns(s.table_ref)) {
+      if ((c.type === "Ref" || c.type === "RefList") && c.options.refTable === tableRef) {
+        out.push({ key: `${s.id}||${c.id}`, sourceId: s.id, linkCol: null, sourceCol: c.id, label: `${name} → its ${c.label || c.col_id}` });
       }
     }
   }
@@ -62,7 +76,7 @@ export function AddWidgetDialog({ mode, onClose }: { mode: "page" | "widget"; on
   const create = async () => {
     setBusy(true);
     const link = links.find((l) => l.key === linkKey);
-    const spec = { type, tableRef, linkSource: link?.sourceId ?? null, linkCol: link?.linkCol ?? null };
+    const spec = { type, tableRef, linkSource: link?.sourceId ?? null, linkCol: link?.linkCol ?? null, linkSourceCol: link?.sourceCol ?? null };
     if (mode === "page") {
       const fallback = tableRef === "new" ? "New page" : (tables.get(tableRef)?.table_id ?? "New page");
       const page = await useDoc.getState().addPage(pageName.trim() || fallback, { ...spec, width: 12 });

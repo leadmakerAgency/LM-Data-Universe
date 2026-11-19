@@ -155,6 +155,20 @@ export function widgetRows(widget: DocWidget, opts: { search?: string; ignoreFil
         const members = new Set(group.rowIds);
         ids = ids.filter((id) => members.has(id));
       }
+    } else if (sourceRefColumn(widget, source)) {
+      // The selected source record's own reference column says which records to show here.
+      const refCol = sourceRefColumn(widget, source)!;
+      const v = selected === null ? null : engine.safeValue(refCol, selected);
+      if (refCol.type === "Ref") {
+        // One record: every row stays visible and the cursor follows.
+        link.recordId = v instanceof RecordRef && v.rowId ? v.rowId : null;
+      } else if (v instanceof RecordSet) {
+        const members = new Set(v.ids);
+        ids = ids.filter((id) => members.has(id));
+      } else {
+        link.waiting = selected === null;
+        ids = [];
+      }
     } else if (widget.link_col) {
       const linkCol = state.columns.get(widget.link_col);
       if (selected === null || !linkCol) {
@@ -191,7 +205,7 @@ export function widgetRows(widget: DocWidget, opts: { search?: string; ignoreFil
         const n = isDate(v) ? v.getTime() : toNumber(v);
         if (n === null) return false;
         const min = f.min === null || f.min === undefined || f.min === "" ? null : rangeBound(f.min);
-        const max = f.max === null || f.max === undefined || f.max === "" ? null : rangeBound(f.max);
+        const max = f.max === null || f.max === undefined || f.max === "" ? null : rangeBound(f.max, true);
         return (min === null || n >= min) && (max === null || n <= max);
       });
     }
@@ -260,12 +274,29 @@ export function boundLabel(v: number | string): string {
   return v;
 }
 
-function rangeBound(v: number | string): number | null {
+/** A filter bound as a number. An upper bound that is a day includes the whole day (times on it too). */
+function rangeBound(v: number | string, upper = false): number | null {
   if (typeof v === "number") return v;
-  if (v.startsWith("@")) return resolveRelativeDate(v);
+  const endOfDay = upper ? 86400000 - 1 : 0;
+  if (v.startsWith("@")) {
+    const day = resolveRelativeDate(v);
+    return day === null ? null : day + endOfDay;
+  }
   const asDate = /^\d{4}-\d{2}-\d{2}$/.test(v) ? Date.parse(`${v}T00:00:00Z`) : NaN;
-  if (!isNaN(asDate)) return asDate;
+  if (!isNaN(asDate)) return asDate + endOfDay;
   return toNumber(v);
+}
+
+/**
+ * For a link through the source's own reference column (options.linkSourceCol):
+ * that column, when it still exists, belongs to the source's table and points here.
+ */
+export function sourceRefColumn(widget: DocWidget, source: DocWidget): DocColumn | null {
+  const id = widget.options.linkSourceCol;
+  if (!id || widget.link_col) return null;
+  const c = useDoc.getState().columns.get(id);
+  if (!c || c.table_ref !== source.table_ref || c.options.refTable !== widget.table_ref) return null;
+  return c.type === "Ref" || c.type === "RefList" ? c : null;
 }
 
 /** Columns a widget shows, in order, without hidden ones. */

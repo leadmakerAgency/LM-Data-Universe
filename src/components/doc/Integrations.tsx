@@ -8,8 +8,8 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AclConditionError, compileCondition, type AclSchema } from "@engine/acl";
 import { Button, Input, Select, Spinner, useDialogs } from "@/components/ui";
 import { ConditionInput } from "./AccessRules";
+import { EmailActionEditor, EmailStatusBanner, emailProblem, type EmailAction, type EmailStatus } from "./EmailAction";
 import { errorMessage, supabase } from "@/lib/supabase";
-import type { DocColumn } from "@/lib/types";
 import { tableColumns, useDoc } from "@/store/docStore";
 import { toast } from "@/store/toasts";
 
@@ -24,7 +24,7 @@ interface WebhookRec {
   secret?: string;
 }
 
-type AutomationAction = { type: "email"; to: string; subject: string; body: string } | { type: "webhook"; url: string };
+type AutomationAction = EmailAction | { type: "webhook"; url: string };
 
 interface AutomationRec {
   id?: string;
@@ -50,6 +50,8 @@ interface JobRec {
   finished_at: string | null;
   last_status: number | null;
   last_error: string | null;
+  /** Emails only: where the message is, as far as SendGrid has told us. */
+  delivery: "queued" | "sent" | "delivered" | "deferred" | "bounced" | "blocked" | "spam" | "failed" | null;
   row_ids: (number | null)[];
   action_index: number | null;
   event: string | null;
@@ -77,6 +79,19 @@ const STATUS_LABEL: Record<JobRec["status"], string> = {
   skipped: "Skipped",
 };
 
+// What SendGrid reported for an email after accepting it.
+const DELIVERY_LABEL: Record<NonNullable<JobRec["delivery"]>, string> = {
+  queued: "",
+  sent: "Accepted",
+  delivered: "Reached the inbox",
+  deferred: "Delayed by the recipient's server",
+  bounced: "Bounced",
+  blocked: "Blocked",
+  spam: "Marked as spam",
+  failed: "",
+};
+const DELIVERY_BAD = new Set(["bounced", "blocked", "spam"]);
+
 const when = (iso: string) => new Date(iso).toLocaleString(undefined, { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit" });
 
 export function IntegrationsView() {
@@ -84,6 +99,7 @@ export function IntegrationsView() {
   const tables = useDoc((s) => s.tables);
   const [data, setData] = useState<Data | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [mail, setMail] = useState<EmailStatus | null>(null);
   const [editing, setEditing] = useState<{ kind: "webhook"; rec: WebhookRec } | { kind: "automation"; rec: AutomationRec } | null>(null);
   const sortedTables = useMemo(() => [...tables.values()].sort((a, b) => a.position - b.position), [tables]);
 
@@ -96,6 +112,13 @@ export function IntegrationsView() {
       setData(data as Data);
     }
   }, [docId]);
+
+  // Whether email is set up (it changes rarely: asked once per visit).
+  useEffect(() => {
+    void supabase()
+      .rpc("email_status")
+      .then(({ data }) => setMail((data as EmailStatus | null) ?? null));
+  }, []);
 
   useEffect(() => {
     const first = setTimeout(load, 0);
@@ -135,6 +158,8 @@ export function IntegrationsView() {
         </p>
       </div>
 
+      {(editing?.kind === "automation" || data.automations.some((a) => a.actions.some((x) => x.type === "email"))) && <EmailStatusBanner status={mail} />}
+
       <ApiBox docId={docId} tableName={sortedTables[0]?.table_id ?? "Table1"} />
 
       {editing?.kind === "webhook" ? (
@@ -150,6 +175,7 @@ export function IntegrationsView() {
         <AutomationEditor
           rec={editing.rec}
           docId={docId}
+          mail={mail}
           onDone={() => {
             setEditing(null);
             void load();
@@ -276,11 +302,13 @@ export function IntegrationsView() {
                     </td>
                     <td className="px-2 py-1.5 text-gray-600">{j.row_ids.filter((x) => x !== null).map((x) => `#${x}`).join(", ")}</td>
                     <td className="px-2 py-1.5">
-                      <span className={clsx("rounded-full px-2 py-0.5 font-medium", STATUS_STYLE[j.status])}>{STATUS_LABEL[j.status]}</span>
+                      <span className={clsx("rounded-full px-2 py-0.5 font-medium", j.delivery && DELIVERY_BAD.has(j.delivery) ? STATUS_STYLE.failed : STATUS_STYLE[j.status])}>
+                        {j.delivery && DELIVERY_BAD.has(j.delivery) ? DELIVERY_LABEL[j.delivery] : j.status === "done" && j.delivery ? "Sent" : STATUS_LABEL[j.status]}
+                      </span>
                       {j.attempts > 1 && <span className="ml-1 text-gray-400">×{j.attempts}</span>}
                     </td>
                     <td className="max-w-80 truncate px-2 py-1.5 text-gray-600" title={j.last_error ?? undefined}>
-                      {j.last_error ?? (j.last_status ? `HTTP ${j.last_status}` : "")}
+                      {j.last_error ?? (j.delivery && DELIVERY_LABEL[j.delivery] ? DELIVERY_LABEL[j.delivery] : j.last_status ? `HTTP ${j.last_status}` : "")}
                       {j.status === "pending" && j.attempts > 0 && ` · next try ${when(j.next_run_at)}`}
                     </td>
                     <td className="px-2 py-1.5 text-right">
@@ -505,7 +533,7 @@ function WebhookEditor({ rec, docId, onDone }: { rec: WebhookRec; docId: string;
   );
 }
 
-function AutomationEditor({ rec, docId, onDone }: { rec: AutomationRec; docId: string; onDone: () => void }) {
+function AutomationEditor({ rec, docId, mail, onDone }: { rec: AutomationRec; docId: string; mail: EmailStatus | null; onDone: () => void }) {
   const [a, setA] = useState(rec);
   const [busy, setBusy] = useState(false);
   const { confirm } = useDialogs();
@@ -524,6 +552,10 @@ function AutomationEditor({ rec, docId, onDone }: { rec: AutomationRec; docId: s
 
   const save = async () => {
     if (conditionError) return toast.error(conditionError);
+    for (const act of a.actions) {
+      const problem = act.type === "email" ? emailProblem(act, cols) : null;
+      if (problem) return toast.error(problem);
+    }
     setBusy(true);
     const { error } = await supabase().rpc("save_automation", {
       p_doc: docId,
@@ -629,18 +661,20 @@ function AutomationEditor({ rec, docId, onDone }: { rec: AutomationRec; docId: s
               )}
             </div>
             {act.type === "email" ? (
-              <div className="space-y-2">
-                <Input value={act.to} onChange={(e) => setAction(i, { to: e.target.value })} placeholder="To: sales@example.com, {{Email}}" />
-                <Input value={act.subject} onChange={(e) => setAction(i, { subject: e.target.value })} placeholder="Subject: {{Name}} is now {{Status}}" />
-                <textarea
-                  value={act.body}
-                  onChange={(e) => setAction(i, { body: e.target.value })}
-                  rows={4}
-                  placeholder="Message: Hello, {{Name}} … Open: {{link}}"
-                  className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm outline-none focus:border-brand-500 focus:ring-2 focus:ring-brand-100"
-                />
-                <Placeholders cols={cols} />
-              </div>
+              <EmailActionEditor
+                action={act}
+                cols={cols}
+                status={mail}
+                onChange={(p) => setAction(i, p)}
+                preview={async () => {
+                  const { data, error } = await supabase().rpc("preview_automation", {
+                    p_doc: docId,
+                    p_auto: { table_ref: a.table_ref, name: a.name, actions: [act] },
+                  });
+                  if (error) throw error;
+                  return data;
+                }}
+              />
             ) : (
               <div className="space-y-1">
                 <Input value={act.url} onChange={(e) => setAction(i, { url: e.target.value.trim() })} placeholder="https://hooks.example.com/…" />
@@ -667,18 +701,6 @@ function AutomationEditor({ rec, docId, onDone }: { rec: AutomationRec; docId: s
       </label>
       <SecretBox secret={a.actions.some((x) => x.type === "webhook") ? a.secret : undefined} />
     </EditorShell>
-  );
-}
-
-function Placeholders({ cols }: { cols: DocColumn[] }) {
-  return (
-    <p className="text-xs text-gray-500">
-      Placeholders: {cols.slice(0, 12).map((c) => (
-        <code key={c.id} className="mr-1 rounded bg-gray-100 px-1">{`{{${c.col_id}}}`}</code>
-      ))}
-      <code className="mr-1 rounded bg-gray-100 px-1">{"{{id}}"}</code>
-      <code className="rounded bg-gray-100 px-1">{"{{link}}"}</code>
-    </p>
   );
 }
 

@@ -76,7 +76,7 @@ export interface DocPage {
   layout?: Record<string, unknown>;
 }
 
-export type WidgetType = "table" | "card" | "card_list" | "chart" | "summary" | "form" | "calendar" | "custom";
+export type WidgetType = "table" | "card" | "card_list" | "chart" | "summary" | "form" | "calendar" | "custom" | "board" | "timeline" | "gallery";
 
 export const WIDGET_TYPES: { type: WidgetType; label: string; description: string }[] = [
   { type: "table", label: "Table", description: "Spreadsheet-style grid of records" },
@@ -86,6 +86,9 @@ export const WIDGET_TYPES: { type: WidgetType; label: string; description: strin
   { type: "summary", label: "Summary", description: "Group records and total them" },
   { type: "form", label: "Form", description: "Collect new records with a shareable form" },
   { type: "calendar", label: "Calendar", description: "Records with dates as events by month, week or day" },
+  { type: "board", label: "Board", description: "Cards in stacks by stage, status or owner; drag to change" },
+  { type: "timeline", label: "Timeline", description: "Records as bars across time, with dependencies" },
+  { type: "gallery", label: "Gallery", description: "Tiles with a cover image or file, for assets and files" },
   { type: "custom", label: "Custom", description: "A map, invoice, labels, or any web page given the data" },
 ];
 
@@ -138,6 +141,12 @@ export interface WidgetOptions {
   filters?: Record<string, ColumnFilter>;
   hidden?: string[];
   colWidths?: Record<string, number>;
+  /**
+   * Linking through a reference column of the *source* widget's table that points at this
+   * widget's table ("Orders → its Customer"): a Reference moves the cursor to that record,
+   * a Reference List shows just those records. Used with link_source (link_col stays null).
+   */
+  linkSourceCol?: string | null;
   /** table: number of leftmost visible columns kept in view while scrolling */
   frozen?: number;
   /** table: conditional styles applied to whole rows */
@@ -176,6 +185,50 @@ export interface WidgetOptions {
   formDescription?: string;
   submitLabel?: string;
   successMessage?: string;
+  /** board / gallery / timeline: how a record's tile looks */
+  tileTitle?: string | null;
+  /** Columns shown on the tile, in order (default: the first few). */
+  tileFields?: string[];
+  /** An Attachments column whose first file is the cover. */
+  tileCover?: string | null;
+  tileCoverFit?: "crop" | "fit";
+  /** Show each field's name above its value. */
+  tileLabels?: boolean;
+  /** A Choice column whose colour marks the tile. */
+  tileColor?: string | null;
+
+  /** board: the column whose values are the stacks (Choice, Reference or Toggle) */
+  boardCol?: string | null;
+  /** board: a second grouping across the board, one lane per value */
+  boardLane?: string | null;
+  /** board: a number column totalled in each stack's header */
+  boardSum?: string | null;
+  /** board: most cards a stack should hold (stack key -> limit) */
+  boardWip?: Record<string, number>;
+  /** board: stacks not shown (stack keys; "" is the stack of records without a value) */
+  boardHidden?: string[];
+  boardHideEmpty?: boolean;
+  /** board: a condition a record must meet before it may enter a stack (stack key -> formula) */
+  boardRules?: Record<string, string>;
+  /** board: show how long each card has been in its stack (a DateTime column stamped when the stack changes) */
+  boardSince?: string | null;
+
+  /** gallery */
+  galSize?: "small" | "medium" | "large";
+  galGroup?: string | null;
+  /** One tile per record, or one per file of the cover column. */
+  galMode?: "records" | "files";
+
+  /** timeline */
+  tlStart?: string | null;
+  tlEnd?: string | null;
+  tlGroup?: string | null;
+  /** A Reference List column to the same table: the records this one waits for. */
+  tlDeps?: string | null;
+  /** A number column (0 to 1, or 0 to 100) drawn as progress inside the bar. */
+  tlProgress?: string | null;
+  tlZoom?: TimelineZoom;
+
   /** calendar */
   calStart?: string | null;
   calEnd?: string | null;
@@ -191,6 +244,8 @@ export interface WidgetOptions {
   /** custom: settings the widget saved for itself */
   customOptions?: Record<string, unknown>;
 }
+
+export type TimelineZoom = "day" | "week" | "month" | "quarter" | "year";
 
 export type DateBucket = "day" | "week" | "month" | "quarter" | "year";
 

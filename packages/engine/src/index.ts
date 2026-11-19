@@ -10,4 +10,5 @@ export { FUNCTION_NAMES, lookupFunction, stringMethod, toText } from "./function
 export { AclConditionError, USER_FIELDS, compileCondition, conditionColumns, conditionCompletions, printCondition, type AclAttribute, type AclNode, type AclSchema } from "./acl";
 export { parseFormula, FormulaSyntaxError, referencedColumns, renameColumnInFormula, renameTableInFormula, type Node } from "./parser";
 export { DependencyAnalyzer, affectedFormulas, type ChangeSet, type FormulaDeps, type SchemaInfo } from "./deps";
+export { renameColumnRefs } from "./rename";
 export { changeSetFromActions, encodeValue, recompute, type ComputedRow, type EncodedValue, type LoggedOp } from "./recalc";

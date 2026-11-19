@@ -91,3 +91,14 @@ body {
 .toast-in {
   animation: toast-in 0.18s ease-out;
 }
+
+/* Email preview in the automation editor (HTML from the Markdown renderer). */
+.mail-preview p { margin: 0 0 0.75em; }
+.mail-preview p:last-child { margin-bottom: 0; }
+.mail-preview h2, .mail-preview h3, .mail-preview h4 { margin: 0.9em 0 0.4em; font-weight: 600; }
+.mail-preview h2 { font-size: 1.15em; }
+.mail-preview ul, .mail-preview ol { margin: 0 0 0.75em 1.4em; }
+.mail-preview ul { list-style: disc; }
+.mail-preview ol { list-style: decimal; }
+.mail-preview a { color: #5a43d9; text-decoration: underline; }
+.mail-preview code { background: #f3f4f6; border-radius: 3px; padding: 0 3px; font-size: 0.92em; }

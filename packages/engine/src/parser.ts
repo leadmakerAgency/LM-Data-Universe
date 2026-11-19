@@ -10,14 +10,14 @@
 
 export type Node =
   | { t: "num"; v: number }
-  | { t: "str"; v: string }
+  | { t: "str"; v: string; pos?: number }
   | { t: "const"; v: boolean | null }
-  | { t: "col"; name: string }
+  | { t: "col"; name: string; pos?: number }
   | { t: "name"; name: string }
-  | { t: "attr"; obj: Node; name: string }
-  | { t: "call"; fn: Node; args: Node[]; kwargs: { name: string; value: Node }[] }
+  | { t: "attr"; obj: Node; name: string; pos?: number }
+  | { t: "call"; fn: Node; args: Node[]; kwargs: { name: string; value: Node; pos?: number }[] }
   | { t: "index"; obj: Node; index: Node }
-  | { t: "slice"; obj: Node; start: Node | null; end: Node | null }
+  | { t: "slice"; obj: Node; start: Node | null; end: Node | null; step?: Node | null }
   | { t: "list"; items: Node[] }
   | { t: "dict"; entries: { key: Node; value: Node }[] }
   | { t: "un"; op: "-" | "+"; arg: Node }
@@ -191,7 +191,12 @@ const KEYWORDS = new Set([
 
 class Parser {
   private i = 0;
-  constructor(private toks: Tok[]) {}
+  /**
+   * `base` is where the tokenized text starts in the formula source, so the
+   * `pos` of column, attribute and keyword names are offsets into that source
+   * (used to rename columns). NaN when unknown (inside f-strings).
+   */
+  constructor(private toks: Tok[], private base = 0) {}
 
   private peek(offset = 0): Tok {
     return this.toks[Math.min(this.i + offset, this.toks.length - 1)];
@@ -327,7 +332,15 @@ class Parser {
         }
         case "while":
         case "def":
-          throw new FormulaSyntaxError(`"${t.v}" isn't supported in formulas`, t.pos);
+        case "try":
+        case "import":
+        case "from":
+        case "class":
+        case "with":
+          // Only as a statement keyword: `try_x = 1` or `with(...)` are still ordinary names.
+          if (t.v === "while" || t.v === "def" || this.peek(1).k === "ident" || this.isOp(":", 1)) {
+            throw new FormulaSyntaxError(`"${t.v}" isn't supported in formulas`, t.pos);
+          }
       }
       // name = value, a, b = value, name += value
       let k = 1;
@@ -429,12 +442,18 @@ class Parser {
 
   comparison(): Node {
     let left = this.concat();
+    // The right-hand side of the previous ordering comparison, for chains like 1 < x < 10.
+    let chainFrom: Node | null = null;
     for (;;) {
       const t = this.peek();
       if (t.k === "op" && ["==", "!=", "<>", "<", ">", "<=", ">=", "="].includes(t.v)) {
         this.next();
         const op = t.v === "=" ? "==" : t.v === "<>" ? "!=" : t.v;
-        left = { t: "cmp", op, left, right: this.concat() };
+        const right = this.concat();
+        const ordering = op === "<" || op === ">" || op === "<=" || op === ">=";
+        if (chainFrom && ordering) left = { t: "and", left, right: { t: "cmp", op, left: chainFrom, right } };
+        else left = { t: "cmp", op, left, right };
+        chainFrom = ordering ? right : null;
       } else if (this.isKw("in")) {
         this.next();
         left = { t: "cmp", op: "in", left, right: this.concat() };
@@ -504,17 +523,17 @@ class Parser {
         this.next();
         const t = this.next();
         if (t.k !== "ident") throw new FormulaSyntaxError("Expected a name after .", t.pos);
-        node = { t: "attr", obj: node, name: t.v };
+        node = { t: "attr", obj: node, name: t.v, pos: this.base + t.pos };
       } else if (this.isOp("(")) {
         this.next();
         const args: Node[] = [];
-        const kwargs: { name: string; value: Node }[] = [];
+        const kwargs: { name: string; value: Node; pos?: number }[] = [];
         while (!this.isOp(")")) {
           const t = this.peek();
           if (t.k === "ident" && this.isOp("=", 1)) {
             this.next();
             this.next();
-            kwargs.push({ name: t.v, value: this.expr() });
+            kwargs.push({ name: t.v, value: this.expr(), pos: this.base + t.pos });
           } else {
             if (kwargs.length) throw new FormulaSyntaxError("Positional argument after keyword argument", t.pos);
             let arg = this.expr();
@@ -533,9 +552,14 @@ class Parser {
         if (!this.isOp(":")) start = this.expr();
         if (this.isOp(":")) {
           this.next();
-          const end = this.isOp("]") ? null : this.expr();
+          const end = this.isOp("]") || this.isOp(":") ? null : this.expr();
+          let step: Node | null = null;
+          if (this.isOp(":")) {
+            this.next();
+            if (!this.isOp("]")) step = this.expr();
+          }
           this.expectOp("]");
-          node = { t: "slice", obj: node, start, end };
+          node = { t: "slice", obj: node, start, end, step };
         } else {
           this.expectOp("]");
           node = { t: "index", obj: node, index: start! };
@@ -554,13 +578,14 @@ class Parser {
       case "str": {
         // Adjacent strings concatenate, as in Python.
         let v = t.v;
+        const single = this.peek().k !== "str";
         while (this.peek().k === "str") v += (this.next() as { v: string }).v;
-        return { t: "str", v };
+        return single ? { t: "str", v, pos: this.base + t.pos } : { t: "str", v };
       }
       case "fstr":
         return parseFString(t.v, t.pos);
       case "col":
-        return { t: "col", name: t.v };
+        return { t: "col", name: t.v, pos: this.base + t.pos };
       case "ident": {
         const lower = t.v.toLowerCase();
         if (t.v === "True" || t.v === "TRUE" || lower === "true") return { t: "const", v: true };
@@ -680,7 +705,7 @@ function parseFString(text: string, pos: number): Node {
       const spec = split >= 0 ? inner.slice(split + 1) : "";
       if (lit) parts.push(lit);
       lit = "";
-      parts.push({ expr: new Parser(tokenize(exprText)).parseAll(), spec });
+      parts.push({ expr: new Parser(tokenize(exprText), NaN).parseAll(), spec });
       i = j + 1;
     } else {
       lit += ch;
@@ -697,29 +722,26 @@ const cache = new Map<string, Node | FormulaSyntaxError>();
  * One expression (newlines are whitespace, as before) when that parses;
  * otherwise a multi-line program. A lone `return x` is the expression x.
  */
-function parseText(text: string): Node {
+function parseText(text: string, base: number): Node {
   const trimmed = text.trim();
   if (!trimmed) return { t: "const", v: null };
-  const single = trimmed.replace(/^return\s+/, "");
+  const lead = text.length - text.trimStart().length;
+  const ret = /^return\s+/.exec(trimmed);
+  const single = ret ? trimmed.slice(ret[0].length) : trimmed;
   try {
-    return new Parser(tokenize(single)).parseAll();
+    return new Parser(tokenize(single), base + lead + (ret ? ret[0].length : 0)).parseAll();
   } catch (first) {
     if (!(first instanceof FormulaSyntaxError)) throw first;
     // Only fall back to statements when the text looks like a program.
     if (!/\n|^\s*(if|for|return|pass)\b|(^|[^=!<>])=($|[^=])|[+\-*/]=|;/.test(trimmed)) throw first;
     try {
-      return new Parser(tokenize(dedent(text), true)).parseProgram();
+      // Indentation is measured relative to the first line, so the text is used
+      // as it is and token positions stay offsets into the source.
+      return new Parser(tokenize(text, true), base).parseProgram();
     } catch (second) {
       throw second instanceof FormulaSyntaxError ? second : first;
     }
   }
-}
-
-function dedent(text: string): string {
-  const lines = text.replace(/\r/g, "").split("\n");
-  const indents = lines.filter((l) => l.trim()).map((l) => /^[ \t]*/.exec(l)![0].length);
-  const min = indents.length ? Math.min(...indents) : 0;
-  return lines.map((l) => l.slice(Math.min(min, /^[ \t]*/.exec(l)![0].length))).join("\n");
 }
 
 /** Parses a formula, accepting an optional leading "=" or "return". Cached. */
@@ -727,9 +749,13 @@ export function parseFormula(src: string): Node {
   let hit = cache.get(src);
   if (!hit) {
     let text = src.replace(/\s+$/, "");
-    if (text.trimStart().startsWith("=")) text = text.trimStart().slice(1);
+    let base = 0;
+    if (text.trimStart().startsWith("=")) {
+      base = text.length - text.trimStart().length + 1;
+      text = text.trimStart().slice(1);
+    }
     try {
-      hit = parseText(text);
+      hit = parseText(text, base);
     } catch (e) {
       hit = e instanceof FormulaSyntaxError ? e : new FormulaSyntaxError(String(e), 0);
     }

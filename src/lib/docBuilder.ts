@@ -32,7 +32,13 @@ export interface WidgetSpec {
   title?: string;
   width?: number;
   height?: number;
-  options?: WidgetOptions & { groupByLabels?: string[]; xLabel?: string; yLabels?: string[] };
+  options?: WidgetOptions & {
+    groupByLabels?: string[];
+    xLabel?: string;
+    yLabels?: string[];
+    /** Any option that holds a column id (or a list of them), given by column label: { boardCol: "Stage" }. */
+    labels?: Partial<Record<keyof WidgetOptions, string | string[]>>;
+  };
   /** Index of the widget on the same page whose selection drives this one. */
   linkTo?: number;
   /** Label of the Ref column (in this widget's table) used for the link. */
@@ -164,6 +170,22 @@ export async function addTablesToDoc(
       ids.push(...((result.results[0] as number[] | null) ?? []));
     }
     rowIds.set(t.name, ids);
+    // References to rows of this same table (a task that waits for other tasks)
+    // can only be filled in once those rows exist.
+    const selfCols = t.columns.map((c, k) => ({ c, k })).filter(({ c }) => c.refTable === t.name && !c.formula);
+    if (selfCols.length) {
+      const fixes = t.rows
+        .map((row, i) => {
+          const values: Record<string, CellValue> = {};
+          for (const { c, k } of selfCols) {
+            const v = resolve(row[k] ?? null, c);
+            if (v !== null && v !== "" && !(Array.isArray(v) && !v.length)) values[cols[k].id] = v;
+          }
+          return { id: ids[i], values };
+        })
+        .filter((r) => r.id !== undefined && Object.keys(r.values).length);
+      if (fixes.length) await send(docId, [{ op: "UpdateRecords", table: tableIds.get(t.name)!, records: fixes }]);
+    }
   }
 
   if (opts.withPages === false) return tableIds;
@@ -178,7 +200,11 @@ export async function addTablesToDoc(
     p.widgets.forEach((w, i) => {
       const cols = colsByTable.get(w.table) ?? [];
       const byLabel = (label?: string) => cols.find((c) => c.label === label)?.id ?? null;
-      const { groupByLabels, xLabel, yLabels, ...options } = w.options ?? {};
+      const { groupByLabels, xLabel, yLabels, labels, ...options } = w.options ?? {};
+      for (const [key, label] of Object.entries(labels ?? {})) {
+        const value = Array.isArray(label) ? label.map(byLabel).filter((x): x is string => !!x) : byLabel(label as string);
+        (options as Record<string, unknown>)[key] = value;
+      }
       if (groupByLabels) options.groupBy = groupByLabels.map(byLabel).filter((x): x is string => !!x);
       if (xLabel) options.xCol = byLabel(xLabel);
       if (yLabels) options.yCols = yLabels.map(byLabel).filter((x): x is string => !!x);
